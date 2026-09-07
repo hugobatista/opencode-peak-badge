@@ -5,6 +5,8 @@ name in the prompt bar, so you always know whether the active model is billed
 at peak rates. Updates live — no restart needed when a session crosses a peak
 window boundary.
 
+![Demo](docs/demo-peak.png)
+
 ## What it does
 
 - Renders a badge in `session_prompt_right` and `home_prompt_right` (both
@@ -12,6 +14,12 @@ window boundary.
 - `[PEAK]` renders in the theme's warning color. `[OFF-PEAK]` renders in the
   muted color. The badge shows in **both** states for tracked models.
 - Recomputes every `pollSeconds` (default 30) and on every model switch.
+- Resolves the active model at session start from `session.created` /
+  `session.updated` events, with a `session.get` fallback, so the badge shows
+  before the first prompt. On the home screen (no session yet) it uses the
+  last-used model from OpenCode's `model.json` and watches that file, so the
+  badge updates immediately when you pick a model, instead of waiting for the
+  next poll tick.
 - Shows nothing for models without peak hours (for example `glm-5.3-flash`).
 
 ## Requirements
