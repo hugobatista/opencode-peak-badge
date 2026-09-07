@@ -16,21 +16,43 @@ window boundary.
 
 ## Requirements
 
-- OpenCode TUI (recent version with TUI plugin support, 1.x).
-- [Bun](https://bun.sh) to install dependencies.
+- OpenCode TUI >= 1.14 (TUI plugin support).
+- [Bun](https://bun.sh) to install dependencies (dev only).
 
 ## Install
+
+```sh
+opencode plugin opencode-peak-badge --global
+```
+
+Or add the package name to `~/.config/opencode/tui.json`:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/tui.json",
+  "plugin": ["opencode-peak-badge"]
+}
+```
+
+Restart OpenCode. Config is loaded at startup; there is no hot reload.
+
+Verify. Start a session with a tracked model (for example
+`opencode-go/deepseek-v4-flash`) and confirm the badge appears next to the
+model name in the prompt bar. To force a known state, see
+[Evaluation](#evaluation).
+
+### Install from source (local dev)
 
 1. Clone the repository and install dependencies:
 
    ```sh
-   git clone https://github.com/you/opencode-peak-badge.git ~/code/projects/opencode-peak-badge
+   git clone https://github.com/hugobatista/opencode-peak-badge.git ~/code/projects/opencode-peak-badge
    cd ~/code/projects/opencode-peak-badge
    bun install
    ```
 
-2. Register the plugin in `~/.config/opencode/tui.json`. Add the `plugin`
-   array (or extend it) with an absolute path to `src/index.tsx`:
+2. Register the plugin in `~/.config/opencode/tui.json` with an absolute
+   path to `src/index.tsx`:
 
    ```jsonc
    {
@@ -45,11 +67,6 @@ window boundary.
    tuple form (see [Configuration](#configuration)).
 
 3. Restart OpenCode. Config is loaded at startup; there is no hot reload.
-
-4. Verify. Start a session with a tracked model (for example
-   `opencode-go/deepseek-v4-flash`) and confirm the badge appears next to the
-   model name in the prompt bar. To force a known state, see
-   [Evaluation](#evaluation).
 
 ## Configuration
 
@@ -152,13 +169,32 @@ restart OpenCode.
 bun install
 bun run typecheck   # tsc --noEmit, strict
 bun test            # unit (core logic) + functional (mocked TUI api)
+bun run build       # dist/tui.js + dist/tui.d.ts (npm entrypoint)
 ```
 
 - `src/core.ts` — pure logic: window parsing, UTC peak check, per-model config
   resolution. No TUI imports. Fully unit-tested.
 - `src/index.tsx` — the TUI plugin (`id: "peak-badge"`). The plugin loader
   reads the default export only; the `__test` named export is a test hook.
+- `scripts/build.ts` — bundles `src/index.tsx` to `dist/tui.js` with
+  `@opencode-ai/plugin`, `@opentui/*` and `solid-js` external. The npm
+  `exports["./tui"]` entry points at `dist`, never at `src` (the Solid
+  transform does not run inside `node_modules`).
+
+## Pre-release checklist
+
+```sh
+bun install
+bun run typecheck
+bun test
+bun run build
+npm pack --dry-run
+```
+
+Inspect the pack list (`dist/`, `README.md`, `LICENSE` only). Scan for
+secrets before `npm publish`.
 
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE). Author: Hugo Batista
+(<https://github.com/hugobatista>).

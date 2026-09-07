@@ -4,28 +4,52 @@
   "description": "OpenCode TUI plugin: peak-hours badge in the model name (DeepSeek V4 family).",
   "type": "module",
   "license": "MIT",
-  "files": ["src"],
+  "author": {
+    "name": "Hugo Batista",
+    "url": "https://github.com/hugobatista"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hugobatista/opencode-peak-badge.git"
+  },
+  "homepage": "https://github.com/hugobatista/opencode-peak-badge#readme",
+  "bugs": {
+    "url": "https://github.com/hugobatista/opencode-peak-badge/issues"
+  },
+  "keywords": ["opencode", "opencode-plugin", "tui", "deepseek", "peak-hours"],
+  "engines": {
+    "opencode": ">=1.14.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
   "exports": {
-    "./tui": "./src/index.tsx"
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js",
+      "default": "./dist/tui.js"
+    }
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@opencode-ai/plugin": "1.14.39",
-    "@opentui/core": "0.2.2",
-    "@opentui/solid": "0.2.2",
-    "solid-js": "^1.9.0"
-  },
-  "devDependencies": {
-    "@types/bun": "^1.4.1",
-    "@types/node": "^24.0.0",
-    "typescript": "^5.8.0"
+    "typecheck": "tsc --noEmit",
+    "build": "bun run scripts/build.ts",
+    "prepublishOnly": "bun run typecheck && bun test && bun run build"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.14.0",
     "@opentui/core": ">=0.2.2",
-    "@opentui/solid": ">=0.2.2"
+    "@opentui/solid": ">=0.2.2",
+    "solid-js": "^1.9.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.14.39",
+    "@opentui/core": "0.2.2",
+    "@opentui/solid": "0.2.2",
+    "@types/bun": "^1.4.1",
+    "@types/node": "^24.0.0",
+    "solid-js": "^1.9.0",
+    "typescript": "^5.8.0"
   }
 }
