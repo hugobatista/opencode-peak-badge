@@ -1,0 +1,31 @@
+{
+  "name": "opencode-peak-badge",
+  "version": "0.1.0",
+  "description": "OpenCode TUI plugin: peak-hours badge in the model name (DeepSeek V4 family).",
+  "type": "module",
+  "license": "MIT",
+  "files": ["src"],
+  "exports": {
+    "./tui": "./src/index.tsx"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "1.14.39",
+    "@opentui/core": "0.2.2",
+    "@opentui/solid": "0.2.2",
+    "solid-js": "^1.9.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.14.0",
+    "@opentui/core": ">=0.2.2",
+    "@opentui/solid": ">=0.2.2"
+  }
+}
