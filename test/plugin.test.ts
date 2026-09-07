@@ -1,5 +1,8 @@
 import { plugin as registerBunPlugin } from "bun"
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { TuiPluginApi, TuiPluginMeta } from "@opencode-ai/plugin/tui"
 import solid from "@opentui/solid/bun-plugin"
 
@@ -18,7 +21,12 @@ type Instance = {
   registered: Array<Record<string, unknown>>
 }
 
-function makeApi(configModel: string, history: Array<Record<string, unknown>> = []) {
+function makeApi(
+  configModel: string,
+  history: Array<Record<string, unknown>> = [],
+  sessionGet: (sessionID: string) => { model?: { id: string; providerID: string } } | undefined = () => undefined,
+  statePath = "",
+) {
   const events: Array<{ type: string; handler: (e: unknown) => void }> = []
   const registered: Array<Record<string, unknown>> = []
   const disposed: Array<() => void> = []
@@ -44,13 +52,24 @@ function makeApi(configModel: string, history: Array<Record<string, unknown>> = 
     state: {
       config: { model: configModel },
       session: { messages: (_id: string) => history },
+      path: { state: statePath },
+    },
+    client: {
+      session: {
+        get: async ({ sessionID }: { sessionID: string }) => ({ data: sessionGet(sessionID) }),
+      },
     },
   }
   return { api, events, registered, disposed }
 }
 
-async function init(configModel: string, history: Array<Record<string, unknown>> = []): Promise<Instance> {
-  const instance = makeApi(configModel, history)
+async function init(
+  configModel: string,
+  history: Array<Record<string, unknown>> = [],
+  sessionGet: (sessionID: string) => { model?: { id: string; providerID: string } } | undefined = () => undefined,
+  statePath = "",
+): Promise<Instance> {
+  const instance = makeApi(configModel, history, sessionGet, statePath)
   await mod.default.tui(instance.api as unknown as TuiPluginApi, undefined, {
     state: "first",
     id: "peak-badge",
@@ -149,6 +168,36 @@ describe("untracked default model", () => {
   })
 })
 
+describe("home model from recent model.json", () => {
+  test("resolves badge from recent[0] when config has no model", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "peak-badge-"))
+    writeFileSync(
+      join(dir, "model.json"),
+      JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
+    )
+    const instance = await init("", [], () => undefined, dir)
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge(undefined)).toEqual({ label: "[PEAK]", peak: true })
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("falls back to off-peak on weekends", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "peak-badge-"))
+    writeFileSync(
+      join(dir, "model.json"),
+      JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
+    )
+    const instance = await init("", [], () => undefined, dir)
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-12T07:00:00Z")
+    instance.refresh()
+    expect(instance.badge(undefined)).toEqual({ label: "[OFF-PEAK]", peak: false })
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
 describe("model tracking", () => {
   let instance: Instance
   let switched!: { handler: (e: unknown) => void }
@@ -198,6 +247,55 @@ describe("history seeding", () => {
     setFake("2026-09-07T08:30:00Z")
     seeded.refresh()
     expect(seeded.badge("s4")).toEqual({ label: "[PEAK]", peak: true })
+  })
+})
+
+describe("model resolution at session start", () => {
+  test("session.created seeds model before any prompt", async () => {
+    const instance = await init("opencode-go/glm-5.3-flash")
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    created.handler({
+      id: "evt-c1",
+      type: "session.created",
+      properties: { sessionID: "s10", info: { model: { id: "deepseek-v4-flash", providerID: "opencode-go" } } },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("s10")).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("session.updated updates the tracked model", async () => {
+    const instance = await init("opencode-go/glm-5.3-flash")
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    const updated = instance.events.find((e) => e.type === "session.updated")!
+    created.handler({
+      id: "evt-c2",
+      type: "session.created",
+      properties: { sessionID: "s11", info: { model: { id: "deepseek-v4-flash", providerID: "opencode-go" } } },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("s11")).toEqual({ label: "[PEAK]", peak: true })
+    updated.handler({
+      id: "evt-u2",
+      type: "session.updated",
+      properties: { sessionID: "s11", info: { model: { id: "glm-5.3-flash", providerID: "opencode-go" } } },
+    })
+    expect(instance.badge("s11")).toBeUndefined()
+  })
+
+  test("async session.get fallback resolves the badge", async () => {
+    const instance = await init("opencode-go/glm-5.3-flash", [], (sessionID) =>
+      sessionID === "s99" ? { model: { id: "deepseek-v4-flash", providerID: "opencode-go" } } : undefined,
+    )
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("s99")).toBeUndefined()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(instance.badge("s99")).toEqual({ label: "[PEAK]", peak: true })
   })
 })
 
