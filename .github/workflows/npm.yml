@@ -1,0 +1,66 @@
+name: npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+run-name: ${{ github.ref_name }} -> npm ( ${{ github.run_attempt }} )
+
+jobs:
+
+  npm:
+    name: npm
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+
+    - name: Echo current date and time
+      id: datetime
+      run: |
+        echo "datetime: $(date '+%Y-%m-%d %H:%M:%S')"
+
+    - name: Checkout
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        fetch-depth: 1
+
+    - name: Install Bun
+      run: |
+        curl -fsSL https://bun.sh/install | bash
+        echo "$HOME/.bun/bin" >> $GITHUB_PATH
+
+    - name: Install dependencies
+      run: bun install
+
+    - name: Get version
+      id: get_version
+      run: |
+        export version=$(node -p "require('./package.json').version")
+        echo "version=$version" >> $GITHUB_OUTPUT
+
+    #validates that the version is a valid semver
+    - name: Validate version
+      id: validate_version
+      run: |
+        if [[ ! ${{ steps.get_version.outputs.version }} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "Invalid version: ${{ steps.get_version.outputs.version }}"
+          exit 1
+        fi
+
+    - name: Build
+      run: bun run build
+
+    - name: Strip _authToken from npmrc (let OIDC kick in)
+      run: |
+        npmrc="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+        if [ -f "$npmrc" ]; then
+          sed -i '/_authToken/d' "$npmrc"
+        fi
+
+    - name: Publish to npm
+      run: npm publish --provenance --access public
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}

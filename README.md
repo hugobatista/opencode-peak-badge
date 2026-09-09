@@ -1,5 +1,10 @@
 # opencode-peak-badge
 
+[![GitHub Tag](https://img.shields.io/github/v/tag/hugobatista/opencode-peak-badge?logo=github&label=latest)](https://github.com/hugobatista/opencode-peak-badge/releases)
+[![Lint](https://img.shields.io/github/actions/workflow/status/hugobatista/opencode-peak-badge/lint.yml?label=Lint)](https://github.com/hugobatista/opencode-peak-badge/actions/workflows/lint.yml)
+[![Test](https://img.shields.io/github/actions/workflow/status/hugobatista/opencode-peak-badge/test.yml?label=Test)](https://github.com/hugobatista/opencode-peak-badge/actions/workflows/test.yml)
+[![npm](https://img.shields.io/npm/v/opencode-peak-badge.svg)](https://www.npmjs.com/package/opencode-peak-badge)
+
 OpenCode TUI plugin. Shows a `[PEAK]` / `[OFF-PEAK]` badge next to the model
 name in the prompt bar, so you always know whether the active model is billed
 at peak rates. Updates live — no restart needed when a session crosses a peak

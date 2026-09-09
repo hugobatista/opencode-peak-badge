@@ -1,0 +1,78 @@
+name: create_draft_release
+
+on:
+  workflow_dispatch:
+
+run-name: ${{ github.ref_name }} -> create_draft_release ( ${{ github.run_attempt }} )
+
+jobs:
+
+  create_draft_release:
+    name: create_draft_release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+
+    - name: Echo current date and time
+      id: datetime
+      run: |
+        echo "datetime: $(date '+%Y-%m-%d %H:%M:%S')"
+
+    - name: Checkout
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        fetch-depth: 1
+
+    - name: Install Bun
+      run: |
+        curl -fsSL https://bun.sh/install | bash
+        echo "$HOME/.bun/bin" >> $GITHUB_PATH
+
+    - name: Install dependencies
+      run: bun install
+
+    - name: Get version
+      id: get_version
+      run: |
+        export version=$(node -p "require('./package.json').version")
+        echo "version=$version" >> $GITHUB_OUTPUT
+
+    #validates that the version is a valid semver
+    - name: Validate version
+      id: validate_version
+      run: |
+        if [[ ! ${{ steps.get_version.outputs.version }} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "Invalid version: ${{ steps.get_version.outputs.version }}"
+          exit 1
+        fi
+
+    - name: Build
+      run: bun run build
+
+    - name: Display structure of build files
+      id: display_build_files
+      run: |
+        ls -R dist/
+
+    - name: Archive all artifacts in dist/
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: dist-v${{ steps.get_version.outputs.version }}
+        path: dist/
+        if-no-files-found: error
+
+    - name: Create release branch
+      run: |
+        git checkout -b "release/v${{ steps.get_version.outputs.version }}"
+        git push origin "release/v${{ steps.get_version.outputs.version }}"
+
+    - name: Create DRAFT release through github cli and upload assets
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create v${{ steps.get_version.outputs.version }} \
+          --title v${{ steps.get_version.outputs.version }} \
+          --generate-notes \
+          --draft \
+          dist/*

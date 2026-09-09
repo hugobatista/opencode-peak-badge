@@ -1,0 +1,44 @@
+name: test
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - '**.ts'
+      - '**.tsx'
+      - 'test/**'
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+run-name: ${{ github.ref_name }} -> test ( ${{ github.run_attempt }} )
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Echo current date and time
+        id: datetime
+        run: |
+          echo "datetime: $(date '+%Y-%m-%d %H:%M:%S')"
+
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Install Bun
+        run: |
+          curl -fsSL https://bun.sh/install | bash
+          echo "$HOME/.bun/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run tests
+        run: bun test
