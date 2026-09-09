@@ -95,7 +95,13 @@ Add options as the second element of a tuple entry:
         "models": [
           "opencode-go/deepseek-v4-flash",
           "opencode-go/deepseek-v4-pro",
-          "opencode-go/deepseek-v4-flash-vision-exp"
+          "opencode-go/deepseek-v4-flash-vision-exp",
+          "opencode/deepseek-v4-flash",
+          "opencode/deepseek-v4-pro",
+          "opencode/deepseek-v4-flash-vision-exp",
+          "deepseek/deepseek-v4-flash",
+          "deepseek/deepseek-v4-pro",
+          "deepseek/deepseek-v4-flash-vision-exp"
         ],
         "windows": [["01:00", "04:00"], ["06:00", "10:00"]],
         "weekdaysOnly": true,
@@ -112,7 +118,7 @@ Add options as the second element of a tuple entry:
 
 | Option | Default | Description |
 |---|---|---|
-| `models` | the 3 DeepSeek V4 models on `opencode-go` | Active models with peak hours. Each entry is a `"provider/model"` string (inherits `windows`/`weekdaysOnly`) or an object `{ id, windows?, weekdaysOnly? }` for per-model overrides. Matching is exact `provider/model` (case-insensitive). |
+| `models` | the 9 DeepSeek V4 models on OpenCode Go, OpenCode Zen, and DeepSeek direct | Active models with peak hours. Each entry is a `"provider/model"` string (inherits `windows`/`weekdaysOnly`) or an object `{ id, windows?, weekdaysOnly? }` for per-model overrides. Matching is exact `provider/model` (case-insensitive). |
 | `windows` | `[["01:00","04:00"],["06:00","10:00"]]` | Peak windows in UTC. Each is `["HH:MM","HH:MM"]`, half-open `[start, end)`. A window whose end is ≤ its start wraps past midnight. |
 | `weekdaysOnly` | `true` | When true, weekends are always off-peak. |
 | `pollSeconds` | `30` | How often the badge recomputes (minimum 1). |
@@ -125,17 +131,19 @@ Add options as the second element of a tuple entry:
 ## Background: why per-model peak hours
 
 Peak hours are a property of the **channel + model pair**, not of the model
-alone. They come from DeepSeek's upstream pricing and exist on OpenCode Go but
-not on OpenCode Zen (which bills a flat blended rate). Matching is therefore by
-exact `provider/model` id, so a model used via a flat-priced channel never shows
-a false badge.
+alone. They come from DeepSeek's upstream pricing and apply to the DeepSeek V4
+family on every channel that bills it: OpenCode Go, OpenCode Zen, and DeepSeek
+direct (BYOK). Matching is therefore by exact `provider/model` id, so a model
+only shows a badge on the channels that actually bill peak rates.
 
 Current facts (per OpenCode docs):
 
 - **OpenCode Go** — DeepSeek V4 Pro, V4 Flash and V4 Flash Vision Exp: peak =
   Mon–Fri 01:00–04:00 and 06:00–10:00 UTC; everything else, including weekends,
   is off-peak (2× price in peak). No other Go model has peak hours.
-- **OpenCode Zen** — flat blended rate. No peak hours.
+- **OpenCode Zen** — bills the same DeepSeek V4 models (`opencode/deepseek-v4-*`)
+  at DeepSeek's list price, so the same peak windows apply. The zero-cost
+  `opencode/deepseek-v4-flash-free` variant is never at peak and is not tracked.
 - **DeepSeek direct API (BYOK)** — the same peak windows apply to
   `deepseek/deepseek-v4-*`.
 - **GLM** — has peak hours (14:00–18:00 UTC+8) only on z.ai's own GLM Coding

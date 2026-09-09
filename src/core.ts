@@ -36,6 +36,12 @@ export const DEFAULT_MODELS: ModelEntrySpec[] = [
   "opencode-go/deepseek-v4-flash",
   "opencode-go/deepseek-v4-pro",
   "opencode-go/deepseek-v4-flash-vision-exp",
+  "opencode/deepseek-v4-flash",
+  "opencode/deepseek-v4-pro",
+  "opencode/deepseek-v4-flash-vision-exp",
+  "deepseek/deepseek-v4-flash",
+  "deepseek/deepseek-v4-pro",
+  "deepseek/deepseek-v4-flash-vision-exp",
 ]
 
 export function parseHHMM(value: string): number | undefined {

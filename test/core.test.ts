@@ -56,11 +56,17 @@ describe("modelKey", () => {
 
 describe("resolveRules defaults", () => {
   const defaults = resolveRules({})
-  test("3 deepseek models", () =>
+  test("9 deepseek models across opencode-go, opencode zen and deepseek", () =>
     expect([...defaults.keys()]).toEqual([
       "opencode-go/deepseek-v4-flash",
       "opencode-go/deepseek-v4-pro",
       "opencode-go/deepseek-v4-flash-vision-exp",
+      "opencode/deepseek-v4-flash",
+      "opencode/deepseek-v4-pro",
+      "opencode/deepseek-v4-flash-vision-exp",
+      "deepseek/deepseek-v4-flash",
+      "deepseek/deepseek-v4-pro",
+      "deepseek/deepseek-v4-flash-vision-exp",
     ]))
   test("windows", () => expect(defaults.get("opencode-go/deepseek-v4-flash")?.windows).toEqual(windows))
   test("weekdaysOnly", () => expect(defaults.get("opencode-go/deepseek-v4-flash")?.weekdaysOnly).toBe(true))
