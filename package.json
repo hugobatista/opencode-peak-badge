@@ -1,7 +1,7 @@
 {
   "name": "opencode-peak-badge",
   "version": "0.1.0",
-  "description": "OpenCode TUI plugin: peak-hours badge in the model name (DeepSeek V4 family).",
+  "description": "OpenCode TUI plugin: peak-hours badge in the model name (ex: DeepSeek V4 family).",
   "type": "module",
   "license": "MIT",
   "author": {
