@@ -41,9 +41,11 @@ jobs:
     #validates that the version is a valid semver
     - name: Validate version
       id: validate_version
+      env:
+        VERSION: ${{ steps.get_version.outputs.version }}
       run: |
-        if [[ ! ${{ steps.get_version.outputs.version }} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-          echo "Invalid version: ${{ steps.get_version.outputs.version }}"
+        if [[ ! $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "Invalid version: $VERSION"
           exit 1
         fi
 

@@ -17,7 +17,7 @@ type Instance = {
   badge: (sessionID?: string) => Badge
   badgeText: (sessionID?: string) => string
   refresh: () => void
-  applyRecentModel: () => void
+  applyRecentModel: () => Promise<void>
   events: Array<{ type: string; handler: (e: unknown) => void }>
   disposed: Array<() => void>
   registered: Array<Record<string, unknown>>
@@ -87,7 +87,7 @@ async function init(
     badge: mod.__test.badge as (sessionID?: string) => Badge,
     badgeText: mod.__test.badgeText as (sessionID?: string) => string,
     refresh: mod.__test.refresh as () => void,
-    applyRecentModel: mod.__test.applyRecentModel as () => void,
+    applyRecentModel: mod.__test.applyRecentModel as () => Promise<void>,
   }
 }
 
@@ -192,7 +192,7 @@ describe("detected model in badge text", () => {
     setFake("2026-09-07T08:30:00Z")
     instance.refresh()
     expect(instance.badgeText("s1")).toBe("")
-    instance.applyRecentModel()
+    await instance.applyRecentModel()
     expect(instance.badgeText("s1")).toBe("[PEAK]")
     rmSync(dir, { recursive: true, force: true })
   })
@@ -226,7 +226,7 @@ describe("debug mode shows model", () => {
     setFake("2026-09-07T08:30:00Z")
     instance.refresh()
     expect(instance.badgeText("s1")).toBe("opencode-go/glm-5.3-flash")
-    instance.applyRecentModel()
+    await instance.applyRecentModel()
     expect(instance.badgeText("s1")).toBe("[PEAK] opencode-go/deepseek-v4-flash")
     rmSync(dir, { recursive: true, force: true })
   })
@@ -256,6 +256,7 @@ describe("home model from recent model.json", () => {
     const instance = await init("", [], () => undefined, dir)
     cleanups.push(...instance.disposed)
     setFake("2026-09-07T08:30:00Z")
+    await instance.applyRecentModel()
     instance.refresh()
     expect(instance.badge(undefined)).toEqual({ label: "[PEAK]", peak: true })
     rmSync(dir, { recursive: true, force: true })
@@ -270,6 +271,7 @@ describe("home model from recent model.json", () => {
     const instance = await init("", [], () => undefined, dir)
     cleanups.push(...instance.disposed)
     setFake("2026-09-12T07:00:00Z")
+    await instance.applyRecentModel()
     instance.refresh()
     expect(instance.badge(undefined)).toEqual({ label: "[OFF-PEAK]", peak: false })
     rmSync(dir, { recursive: true, force: true })
@@ -288,7 +290,7 @@ describe("model picked in a session", () => {
     setFake("2026-09-07T08:30:00Z")
     instance.refresh()
     expect(instance.badge("s1")).toBeUndefined()
-    instance.applyRecentModel()
+    await instance.applyRecentModel()
     expect(instance.badge("s1")).toEqual({ label: "[PEAK]", peak: true })
     rmSync(dir, { recursive: true, force: true })
   })
@@ -304,7 +306,7 @@ describe("model picked in a session", () => {
     setFake("2026-09-07T08:30:00Z")
     instance.refresh()
     instance.badge("s1")
-    instance.applyRecentModel()
+    await instance.applyRecentModel()
     expect(instance.badge("s1")).toEqual({ label: "[PEAK]", peak: true })
     instance.badge("s2")
     expect(instance.badge("s1")).toBeUndefined()

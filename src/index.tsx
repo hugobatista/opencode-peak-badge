@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/solid */
-import { readFileSync, watch } from "node:fs"
+import { watch } from "node:fs"
+import { readFile } from "node:fs/promises"
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import { createMemo, createSignal } from "solid-js"
 import {
@@ -31,7 +32,7 @@ const tui: TuiPlugin = async (api, rawOptions) => {
     peak: options.labelPeak ?? "[PEAK]",
     offPeak: options.labelOffPeak ?? "[OFF-PEAK]",
   }
-  const pollSeconds = Math.max(1, options.pollSeconds ?? 10)
+  const pollSeconds = Math.max(1, Number(options.pollSeconds) || 10)
   const subagents = options.subagents ?? true
   const alwaysShow = options.alwaysShow ?? false
   const debug = options.debug ?? false
@@ -182,11 +183,11 @@ const tui: TuiPlugin = async (api, rawOptions) => {
 
   let lastAppliedKey: string | undefined
 
-  function applyRecentModel(): void {
+  async function applyRecentModel(): Promise<void> {
     const state = api.state.path.state
     if (!state) return
     try {
-      const raw = readFileSync(`${state}/model.json`, "utf8")
+      const raw = await readFile(`${state}/model.json`, "utf8")
       const parsed = JSON.parse(raw) as { recent?: Array<{ providerID?: string; modelID?: string }> }
       const recent = parsed.recent?.find((model) => model?.providerID && model?.modelID)
       const key = recent ? `${recent.providerID}/${recent.modelID}` : undefined
@@ -306,7 +307,7 @@ export const __test: {
   badge: TestBadge | undefined
   badgeText: ((sessionID?: string) => string) | undefined
   refresh: (() => void) | undefined
-  applyRecentModel: (() => void) | undefined
+  applyRecentModel: (() => Promise<void>) | undefined
 } = { badge: undefined, badgeText: undefined, refresh: undefined, applyRecentModel: undefined }
 
 const plugin: TuiPluginModule & { id: string } = {
