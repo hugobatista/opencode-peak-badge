@@ -146,8 +146,34 @@ export function resolveRules(options: PeakHoursOptions = {}): RuleSet {
   }
 }
 
+function isSafeRegex(source: string): boolean {
+  let depth = 0
+  let inClass = false
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i]!
+    if (ch === "\\") {
+      i++
+      continue
+    }
+    if (ch === "[") {
+      inClass = true
+      continue
+    }
+    if (ch === "]") {
+      inClass = false
+      continue
+    }
+    if (inClass) continue
+    if (ch === "(") depth++
+    else if (ch === ")") depth = Math.max(0, depth - 1)
+    else if (depth > 0 && "+*}".includes(ch)) return false
+  }
+  return true
+}
+
 function compileRegex(source: string): RegExp | undefined {
   try {
+    if (!isSafeRegex(source)) return undefined
     return new RegExp(source, "i")
   } catch {
     return undefined

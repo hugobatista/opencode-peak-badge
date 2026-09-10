@@ -154,6 +154,11 @@ describe("resolveRules regex matching", () => {
     const rules = resolveRules({ models: ["re:^opencode-go/deepseek", "re:"] })
     expect(rules.patterns.map((rule) => rule.id)).toEqual(["^opencode-go/deepseek"])
   })
+
+  test("nested quantifiers (ReDoS) pattern is dropped", () => {
+    const rules = resolveRules({ models: ["re:^(a+)+$", "re:^opencode-go/deepseek"] })
+    expect(rules.patterns.map((rule) => rule.id)).toEqual(["^opencode-go/deepseek"])
+  })
 })
 
 describe("badgeFor", () => {
