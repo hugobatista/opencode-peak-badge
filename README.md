@@ -35,8 +35,8 @@ restart needed when a session crosses a peak window boundary.
   `alwaysShow: true` forces the badge for the main model from the top-level
   `windows` / `weekdaysOnly`.
 - Provider-agnostic: track any model that has peak pricing by adding a rule
-  under `models`. Built-in defaults cover the DeepSeek V4 family, which is
-  where peak hours are known today.
+  under `models`. Built-in defaults cover DeepSeek models, which is where peak
+  hours are known today.
 
 ## Requirements
 
@@ -104,9 +104,9 @@ Add options as the second element of a tuple entry:
       "/home/your-user/code/projects/opencode-peak-badge/src/index.tsx",
       {
         "models": [
-          "re:^opencode-go/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
-          "re:^opencode/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
-          "re:^deepseek/deepseek-(v4-)?(flash|pro)(-vision-exp)?$"
+          "re:^opencode-go/deepseek",
+          "re:^opencode/deepseek",
+          "re:^deepseek/deepseek"
         ],
         "windows": [["01:00", "04:00"], ["06:00", "10:00"]],
         "weekdaysOnly": true,
@@ -125,7 +125,7 @@ Add options as the second element of a tuple entry:
 
 | Option | Default | Description |
 |---|---|---|
-| `models` | built-in patterns for the DeepSeek V4 family (OpenCode Go, OpenCode Zen, DeepSeek direct) | Models with peak hours. Override to track any `provider/model`. Each entry is a `"provider/model"` exact string, a `"re:<pattern>"` regex string, or an object with per-model `windows`/`weekdaysOnly` overrides. Matching is against the full `provider/model` key (case-insensitive). Exact `id` entries win over regex patterns; otherwise the first matching entry in list order wins. |
+| `models` | built-in patterns for any DeepSeek model (OpenCode Go, OpenCode Zen, DeepSeek direct) | Models with peak hours. Override to track any `provider/model`. Each entry is a `"provider/model"` exact string, a `"re:<pattern>"` regex string, or an object with per-model `windows`/`weekdaysOnly` overrides. Matching is against the full `provider/model` key (case-insensitive). Exact `id` entries win over regex patterns; otherwise the first matching entry in list order wins. |
 | `windows` | `[["01:00","04:00"],["06:00","10:00"]]` | Peak windows in UTC. Each is `["HH:MM","HH:MM"]`, half-open `[start, end)`. A window whose end is ≤ its start wraps past midnight. |
 | `weekdaysOnly` | `true` | When true, weekends are always off-peak. |
 | `pollSeconds` | `10` | How often the badge recomputes (minimum 1). Also used as a safety net to re-read `model.json` for picked model updates. |
@@ -173,18 +173,19 @@ alone. The plugin is provider-agnostic: it renders a badge whenever the active
 in the channels you configure. Add any model you care about — the plugin does
 not know or care which provider it belongs to.
 
-The built-in defaults target the DeepSeek V4 family, because that is where
-peak pricing is known today. Current facts (per OpenCode docs):
+The built-in defaults target DeepSeek models, because that is where peak
+pricing is known today. Current facts (per OpenCode docs):
 
 - **OpenCode Go** — DeepSeek V4 Pro, V4 Flash and V4 Flash Vision Exp: peak =
   Mon–Fri 01:00–04:00 and 06:00–10:00 UTC; everything else, including weekends,
-  is off-peak (2× price in peak). No other Go model has peak hours. OpenCode
-  also exposes Flash as the alias `opencode-go/deepseek-flash`; the default
-  pattern matches both spellings.
-- **OpenCode Zen** — bills the same DeepSeek V4 models (`opencode/deepseek-v4-*`)
-  at DeepSeek's list price, so the same peak windows apply.
+  is off-peak (2× price in peak). No other Go model has peak hours. The same
+  windows apply to newer ids such as `deepseek-v4.1-*`. OpenCode also exposes
+  Flash as the alias `opencode-go/deepseek-flash`; the default patterns match
+  every `opencode-go/deepseek*` id.
+- **OpenCode Zen** — bills the same DeepSeek models (`opencode/deepseek-*`) at
+  DeepSeek's list price, so the same peak windows apply.
 - **DeepSeek direct API (BYOK)** — the same peak windows apply to
-  `deepseek/deepseek-v4-*`.
+  `deepseek/deepseek-*`.
 
 In Lisbon time (WEST, UTC+1) the DeepSeek windows are 02:00–05:00 and
 07:00–11:00; in winter (WET, UTC+0) the UTC windows apply as-is. The plugin

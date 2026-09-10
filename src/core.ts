@@ -41,9 +41,9 @@ export const DEFAULT_WINDOWS: WindowSpec[] = [
 ]
 
 export const DEFAULT_MODELS: ModelEntrySpec[] = [
-  "re:^opencode-go/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
-  "re:^opencode/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
-  "re:^deepseek/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
+  "re:^opencode-go/deepseek",
+  "re:^opencode/deepseek",
+  "re:^deepseek/deepseek",
 ]
 
 export function parseHHMM(value: string): number | undefined {

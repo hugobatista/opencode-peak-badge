@@ -58,14 +58,20 @@ describe("modelKey", () => {
 
 describe("resolveRules defaults", () => {
   const defaults = resolveRules({})
-  test("3 patterns for the deepseek family across opencode-go, opencode zen and deepseek", () =>
+  test("3 patterns for any deepseek model across opencode-go, opencode zen and deepseek", () =>
     expect(defaults.patterns.map((rule) => rule.id)).toEqual([
-      "^opencode-go/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
-      "^opencode/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
-      "^deepseek/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
+      "^opencode-go/deepseek",
+      "^opencode/deepseek",
+      "^deepseek/deepseek",
     ]))
   test("deepseek-v4-flash on opencode-go matches", () =>
     expect(matchRule(defaults, modelKey("opencode-go", "deepseek-v4-flash"))).toBeDefined())
+  test("deepseek-v4.1-flash on opencode-go matches", () =>
+    expect(matchRule(defaults, modelKey("opencode-go", "deepseek-v4.1-flash"))).toBeDefined())
+  test("deepseek-v4.1-pro on opencode matches", () =>
+    expect(matchRule(defaults, modelKey("opencode", "deepseek-v4.1-pro"))).toBeDefined())
+  test("deepseek-v4.1-flash-vision-exp on deepseek matches", () =>
+    expect(matchRule(defaults, modelKey("deepseek", "deepseek-v4.1-flash-vision-exp"))).toBeDefined())
   test("deepseek-v4-pro on opencode matches", () =>
     expect(matchRule(defaults, modelKey("opencode", "deepseek-v4-pro"))).toBeDefined())
   test("deepseek-v4-flash-vision-exp on deepseek matches", () =>
