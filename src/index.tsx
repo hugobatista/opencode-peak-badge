@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { readFileSync, statSync, watch } from "node:fs"
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui"
-import { createSignal } from "solid-js"
+import { createMemo, createSignal } from "solid-js"
 import {
   badgeFor,
   matchRule,
@@ -263,14 +263,14 @@ const tui: TuiPlugin = async (api, rawOptions) => {
     slots: {
       session_prompt_right: (ctx, props) => {
         const theme = ctx.theme.current
-        const state = () => badge(props.session_id)
+        const state = createMemo(() => badge(props.session_id))
         return (
           <text fg={state()?.peak ? theme.warning : theme.textMuted}>{state()?.label ?? ""}</text>
         )
       },
       home_prompt_right: (ctx) => {
         const theme = ctx.theme.current
-        const state = () => badge(undefined)
+        const state = createMemo(() => badge(undefined))
         return (
           <text fg={state()?.peak ? theme.warning : theme.textMuted}>{state()?.label ?? ""}</text>
         )
