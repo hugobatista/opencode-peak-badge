@@ -15,6 +15,8 @@ export type PeakHoursOptions = {
   pollSeconds?: number
   labelPeak?: string
   labelOffPeak?: string
+  subagents?: boolean
+  alwaysShow?: boolean
 }
 
 export type ResolvedModelRule = {
@@ -27,6 +29,7 @@ export type ResolvedModelRule = {
 export type RuleSet = {
   exact: Map<string, ResolvedModelRule>
   patterns: ResolvedModelRule[]
+  fallback: ResolvedModelRule
 }
 
 export type BadgeState = { label: string; peak: boolean }
@@ -135,7 +138,11 @@ export function resolveRules(options: PeakHoursOptions = {}): RuleSet {
       exact.set(id, buildRule(id, entry, defaultWindows, defaultWeekdays))
     }
   }
-  return { exact, patterns }
+  return {
+    exact,
+    patterns,
+    fallback: { id: "", windows: defaultWindows, weekdaysOnly: defaultWeekdays },
+  }
 }
 
 function compileRegex(source: string): RegExp | undefined {
@@ -163,4 +170,17 @@ export function badgeFor(
   if (!rule) return undefined
   const peak = isPeakUtc(now, rule.windows, rule.weekdaysOnly)
   return { label: peak ? labels.peak : labels.offPeak, peak }
+}
+
+export function mergeBadges(states: Array<BadgeState | undefined>): BadgeState | undefined {
+  let result: BadgeState | undefined
+  for (const state of states) {
+    if (!state) continue
+    if (!result) {
+      result = state
+      continue
+    }
+    if (state.peak && !result.peak) result = state
+  }
+  return result
 }

@@ -26,6 +26,7 @@ function makeApi(
   history: Array<Record<string, unknown>> = [],
   sessionGet: (sessionID: string) => { model?: { id: string; providerID: string } } | undefined = () => undefined,
   statePath = "",
+  statusOf: (sessionID: string) => { type: string } | undefined = () => undefined,
 ) {
   const events: Array<{ type: string; handler: (e: unknown) => void }> = []
   const registered: Array<Record<string, unknown>> = []
@@ -51,7 +52,10 @@ function makeApi(
     },
     state: {
       config: { model: configModel },
-      session: { messages: (_id: string) => history },
+      session: {
+        messages: (_id: string) => history,
+        status: statusOf,
+      },
       path: { state: statePath },
     },
     client: {
@@ -68,9 +72,11 @@ async function init(
   history: Array<Record<string, unknown>> = [],
   sessionGet: (sessionID: string) => { model?: { id: string; providerID: string } } | undefined = () => undefined,
   statePath = "",
+  statusOf: (sessionID: string) => { type: string } | undefined = () => undefined,
+  rawOptions?: Record<string, unknown>,
 ): Promise<Instance> {
-  const instance = makeApi(configModel, history, sessionGet, statePath)
-  await mod.default.tui(instance.api as unknown as TuiPluginApi, undefined, {
+  const instance = makeApi(configModel, history, sessionGet, statePath, statusOf)
+  await mod.default.tui(instance.api as unknown as TuiPluginApi, rawOptions, {
     state: "first",
     id: "peak-badge",
   } as TuiPluginMeta)
@@ -296,6 +302,418 @@ describe("model resolution at session start", () => {
     expect(instance.badge("s99")).toBeUndefined()
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(instance.badge("s99")).toEqual({ label: "[PEAK]", peak: true })
+  })
+})
+
+describe("subagent tracking", () => {
+  test("busy tracked child -> badge in peak", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child1" ? { type: "busy" } : undefined),
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("busy tracked child off-peak -> [OFF-PEAK]", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child1" ? { type: "busy" } : undefined),
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T12:00:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toEqual({ label: "[OFF-PEAK]", peak: false })
+  })
+
+  test("idle child is not shown", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child1" ? { type: "idle" } : undefined),
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toBeUndefined()
+  })
+
+  test("untracked child is not shown", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child1" ? { type: "busy" } : undefined),
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "glm-5.3-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toBeUndefined()
+  })
+
+  test("peak wins when main is off-peak and child is peak", async () => {
+    const instance = await init(
+      "opencode-go/deepseek-v4-pro",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child1" ? { type: "busy" } : undefined),
+      {
+        models: [
+          { id: "opencode-go/deepseek-v4-pro", windows: [["12:00", "14:00"]], weekdaysOnly: false },
+          "re:^opencode-go/deepseek-v4-flash$",
+        ],
+      },
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("subagents:false ignores children", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child1" ? { type: "busy" } : undefined),
+      { subagents: false },
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toBeUndefined()
+  })
+
+  test("deleted child clears the badge", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child1" ? { type: "busy" } : undefined),
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    const deleted = instance.events.find((e) => e.type === "session.deleted")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toEqual({ label: "[PEAK]", peak: true })
+    deleted.handler({ id: "d1", type: "session.deleted", properties: { info: { id: "child1" } } })
+    instance.refresh()
+    expect(instance.badge("main1")).toBeUndefined()
+  })
+
+  test("child model set via session.updated", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child1" ? { type: "busy" } : undefined),
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    const updated = instance.events.find((e) => e.type === "session.updated")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: { sessionID: "child1", info: { parentID: "main1" } },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toBeUndefined()
+    updated.handler({
+      id: "u1",
+      type: "session.updated",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      },
+    })
+    instance.refresh()
+    expect(instance.badge("main1")).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("child model switched via session.next.model.switched", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child1" ? { type: "busy" } : undefined),
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    const switched = instance.events.find((e) => e.type === "session.next.model.switched")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "glm-5.3-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toBeUndefined()
+    switched.handler({
+      id: "w1",
+      type: "session.next.model.switched",
+      properties: {
+        timestamp: 1,
+        sessionID: "child1",
+        model: { id: "deepseek-v4-flash", providerID: "opencode-go", variant: "" },
+      },
+    })
+    instance.refresh()
+    expect(instance.badge("main1")).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("nested busy grandchild -> [PEAK]", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "grandchild1" ? { type: "busy" } : undefined),
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "glm-5.3-flash", providerID: "opencode-go" } },
+      },
+    })
+    created.handler({
+      id: "g1",
+      type: "session.created",
+      properties: {
+        sessionID: "grandchild1",
+        info: { parentID: "child1", model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("deleted parent clears its children", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child1" ? { type: "busy" } : undefined),
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    const deleted = instance.events.find((e) => e.type === "session.deleted")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toEqual({ label: "[PEAK]", peak: true })
+    deleted.handler({ id: "d1", type: "session.deleted", properties: { info: { id: "main1" } } })
+    instance.refresh()
+    expect(instance.badge("main1")).toBeUndefined()
+  })
+
+  test("session.status listener refreshes busy child", async () => {
+    let statusOf: (id: string) => { type: string } | undefined = () => undefined
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => statusOf(id),
+    )
+    cleanups.push(...instance.disposed)
+    expect(instance.events.some((e) => e.type === "session.status")).toBe(true)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    const statusEvent = instance.events.find((e) => e.type === "session.status")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toBeUndefined()
+    statusOf = () => ({ type: "busy" })
+    statusEvent.handler({
+      id: "s1",
+      type: "session.status",
+      properties: { sessionID: "child1", status: { type: "busy" } },
+    })
+    expect(instance.badge("main1")).toEqual({ label: "[PEAK]", peak: true })
+  })
+})
+
+describe("alwaysShow", () => {
+  test("untracked main with alwaysShow:true -> badge from default windows", async () => {
+    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, "", undefined, {
+      alwaysShow: true,
+    })
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("s1")).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("untracked main with alwaysShow:true -> [OFF-PEAK] off-peak", async () => {
+    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, "", undefined, {
+      alwaysShow: true,
+    })
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T12:00:00Z")
+    instance.refresh()
+    expect(instance.badge("s1")).toEqual({ label: "[OFF-PEAK]", peak: false })
+  })
+
+  test("default alwaysShow:false -> no badge for untracked main", async () => {
+    const instance = await init("opencode-go/glm-5.3-flash")
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("s1")).toBeUndefined()
+  })
+
+  test("alwaysShow applies to main only, child peak still wins", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child1" ? { type: "busy" } : undefined),
+      { alwaysShow: true },
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("alwaysShow off-peak main + peak child -> [PEAK]", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child1" ? { type: "busy" } : undefined),
+      {
+        alwaysShow: true,
+        models: [{ id: "opencode-go/deepseek-v4-flash", windows: [["12:00", "14:00"]], weekdaysOnly: false }],
+      },
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    created.handler({
+      id: "c1",
+      type: "session.created",
+      properties: {
+        sessionID: "child1",
+        info: { parentID: "main1", model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      },
+    })
+    setFake("2026-09-07T12:00:00Z")
+    instance.refresh()
+    expect(instance.badge("main1")).toEqual({ label: "[PEAK]", peak: true })
   })
 })
 

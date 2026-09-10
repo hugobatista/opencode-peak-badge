@@ -5,10 +5,11 @@ import { createSignal } from "solid-js"
 import {
   badgeFor,
   matchRule,
+  mergeBadges,
   modelKey,
   resolveRules,
+  type BadgeState,
   type PeakHoursOptions,
-  type ResolvedModelRule,
   type RuleSet,
 } from "./core"
 
@@ -31,11 +32,15 @@ const tui: TuiPlugin = async (api, rawOptions) => {
     offPeak: options.labelOffPeak ?? "[OFF-PEAK]",
   }
   const pollSeconds = Math.max(1, options.pollSeconds ?? 30)
+  const subagents = options.subagents ?? true
+  const alwaysShow = options.alwaysShow ?? false
 
   const [tick, setTick] = createSignal(currentNow().getTime())
   const [version, setVersion] = createSignal(0)
   const tracked = new Map<string, ModelRef>()
   const fetching = new Set<string>()
+  const childParent = new Map<string, string>()
+  const children = new Map<string, Map<string, ModelRef>>()
 
   function trackModel(sessionID: string, model: { providerID?: string; id?: string } | undefined): void {
     if (!sessionID || !model?.providerID || !model?.id) return
@@ -43,20 +48,72 @@ const tui: TuiPlugin = async (api, rawOptions) => {
     setVersion((value) => value + 1)
   }
 
+  function trackChild(
+    sessionID: string,
+    parentID: string | undefined,
+    model: { providerID?: string; id?: string } | undefined,
+  ): void {
+    if (!sessionID || !parentID) return
+    let changed = false
+    if (childParent.get(sessionID) !== parentID) {
+      childParent.set(sessionID, parentID)
+      changed = true
+    }
+    const map = children.get(parentID) ?? new Map<string, ModelRef>()
+    if (model?.providerID && model?.id) {
+      const ref: ModelRef = { providerID: model.providerID, modelID: model.id }
+      const prev = map.get(sessionID)
+      if (!prev || prev.providerID !== ref.providerID || prev.modelID !== ref.modelID) {
+        map.set(sessionID, ref)
+        changed = true
+      }
+    } else if (map.delete(sessionID)) {
+      changed = true
+    }
+    if (changed) {
+      children.set(parentID, map)
+      setVersion((value) => value + 1)
+    }
+  }
+
   api.event.on("session.created", (event) => {
     trackModel(event.properties.sessionID, event.properties.info?.model)
+    trackChild(event.properties.sessionID, event.properties.info?.parentID, event.properties.info?.model)
   })
 
   api.event.on("session.updated", (event) => {
     trackModel(event.properties.sessionID, event.properties.info?.model)
+    trackChild(
+      event.properties.sessionID,
+      event.properties.info?.parentID ?? childParent.get(event.properties.sessionID),
+      event.properties.info?.model,
+    )
   })
 
   api.event.on("session.next.model.switched", (event) => {
     trackModel(event.properties.sessionID, event.properties.model)
+    trackChild(event.properties.sessionID, childParent.get(event.properties.sessionID), event.properties.model)
+  })
+
+  api.event.on("session.status", (event) => {
+    if (childParent.has(event.properties.sessionID)) setVersion((value) => value + 1)
   })
 
   api.event.on("session.deleted", (event) => {
-    if (tracked.delete(event.properties.info.id)) setVersion((value) => value + 1)
+    const sessionID = event.properties.info.id
+    let changed = tracked.delete(sessionID)
+    const childMap = children.get(sessionID)
+    if (childMap) {
+      for (const childID of childMap.keys()) childParent.delete(childID)
+      children.delete(sessionID)
+      changed = true
+    }
+    const parent = childParent.get(sessionID)
+    if (parent) {
+      if (children.get(parent)?.delete(sessionID)) changed = true
+      childParent.delete(sessionID)
+    }
+    if (changed) setVersion((value) => value + 1)
   })
 
   const timer = setInterval(() => setTick(currentNow().getTime()), pollSeconds * 1000)
@@ -65,7 +122,7 @@ const tui: TuiPlugin = async (api, rawOptions) => {
     homeWatcher?.close()
   })
 
-  function lookupRule(sessionID: string | undefined): ResolvedModelRule | undefined {
+  function mainRef(sessionID: string | undefined): ModelRef | undefined {
     version()
     let ref: ModelRef | undefined = sessionID ? tracked.get(sessionID) : undefined
     if (!ref && sessionID) {
@@ -95,9 +152,8 @@ const tui: TuiPlugin = async (api, rawOptions) => {
     }
     if (!ref) {
       ref = sessionID ? configModelRef() : (configModelRef() ?? homeModelRef())
-      if (!ref) return undefined
     }
-    return matchRule(rules, modelKey(ref.providerID, ref.modelID))
+    return ref
   }
 
   function configModelRef(): ModelRef | undefined {
@@ -165,9 +221,42 @@ const tui: TuiPlugin = async (api, rawOptions) => {
       })()
     : undefined
 
+  function activeChildRefs(sessionID: string): ModelRef[] {
+    if (!subagents) return []
+    const refs: ModelRef[] = []
+    const stack: string[] = [sessionID]
+    const seen = new Set<string>()
+    while (stack.length > 0) {
+      const parent = stack.pop()
+      if (!parent || seen.has(parent)) continue
+      seen.add(parent)
+      const map = children.get(parent)
+      if (!map) continue
+      for (const [childID, ref] of map) {
+        if (api.state.session.status?.(childID)?.type === "busy") refs.push(ref)
+        stack.push(childID)
+      }
+    }
+    return refs
+  }
+
   function badge(sessionID: string | undefined) {
     const now = new Date(tick())
-    return badgeFor(now, lookupRule(sessionID), labels)
+    const states: BadgeState[] = []
+    const main = mainRef(sessionID)
+    if (main) {
+      const rule =
+        matchRule(rules, modelKey(main.providerID, main.modelID)) ?? (alwaysShow ? rules.fallback : undefined)
+      const state = badgeFor(now, rule, labels)
+      if (state) states.push(state)
+    }
+    if (sessionID) {
+      for (const child of activeChildRefs(sessionID)) {
+        const state = badgeFor(now, matchRule(rules, modelKey(child.providerID, child.modelID)), labels)
+        if (state) states.push(state)
+      }
+    }
+    return mergeBadges(states)
   }
 
   api.slots.register({

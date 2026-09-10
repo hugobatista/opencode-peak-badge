@@ -7,25 +7,33 @@
 
 OpenCode TUI plugin. Shows a `[PEAK]` / `[OFF-PEAK]` badge next to the model
 name in the prompt bar, so you always know whether the active model is billed
-at peak rates. Updates live — no restart needed when a session crosses a peak
-window boundary.
+at peak rates. When a subagent session is running, its model is tracked too:
+peak wins across the main model and all busy subagents. Updates live — no
+restart needed when a session crosses a peak window boundary.
 
 ![Demo](docs/demo-peak.png)
 
 ## What it does
 
 - Renders a badge in `session_prompt_right` and `home_prompt_right` (both
-  slots) whenever the active model has configured peak hours.
+  slots) whenever a model with configured peak hours is active — or always,
+  with `alwaysShow: true`.
 - `[PEAK]` renders in the theme's warning color. `[OFF-PEAK]` renders in the
   muted color. The badge shows in **both** states for tracked models.
 - Recomputes every `pollSeconds` (default 30) and on every model switch.
+- Tracks all descendant subagent sessions through their `parentID` chain.
+  While a subagent session is busy, its model is checked against the peak
+  windows. Peak wins: if any busy subagent is in peak hours, the badge shows
+  `[PEAK]`. Disable with `subagents: false`.
 - Resolves the active model at session start from `session.created` /
   `session.updated` events, with a `session.get` fallback, so the badge shows
   before the first prompt. On the home screen (no session yet) it uses the
   last-used model from OpenCode's `model.json` and watches that file, so the
   badge updates immediately when you pick a model, instead of waiting for the
   next poll tick.
-- Shows nothing for models without configured peak hours.
+- Shows nothing for models without configured peak hours, unless
+  `alwaysShow: true` forces the badge for the main model from the top-level
+  `windows` / `weekdaysOnly`.
 - Provider-agnostic: track any model that has peak pricing by adding a rule
   under `models`. Built-in defaults cover the DeepSeek V4 family, which is
   where peak hours are known today.
@@ -103,6 +111,8 @@ Add options as the second element of a tuple entry:
         "windows": [["01:00", "04:00"], ["06:00", "10:00"]],
         "weekdaysOnly": true,
         "pollSeconds": 30,
+        "subagents": true,
+        "alwaysShow": false,
         "labelPeak": "[PEAK]",
         "labelOffPeak": "[OFF-PEAK]"
       }
@@ -119,11 +129,41 @@ Add options as the second element of a tuple entry:
 | `windows` | `[["01:00","04:00"],["06:00","10:00"]]` | Peak windows in UTC. Each is `["HH:MM","HH:MM"]`, half-open `[start, end)`. A window whose end is ≤ its start wraps past midnight. |
 | `weekdaysOnly` | `true` | When true, weekends are always off-peak. |
 | `pollSeconds` | `30` | How often the badge recomputes (minimum 1). |
+| `subagents` | `true` | Track subagent sessions while they are busy. Peak wins over the main model's state. |
+| `alwaysShow` | `false` | When true, always show a badge for the main model, using the top-level `windows`/`weekdaysOnly` when no model rule matches. |
 | `labelPeak` | `"[PEAK]"` | Text shown during peak hours. |
 | `labelOffPeak` | `"[OFF-PEAK]"` | Text shown during off-peak hours. |
 
 `models` entries are additive to the defaults? No. Supplying `models`
 **replaces** the default list. Provide the full list you want tracked.
+
+### Subagents
+
+When an OpenCode task spawns a subagent session, that child session carries a
+`parentID` pointing at the session that spawned it. The plugin registers child
+sessions from `session.created` / `session.updated` and tracks the child's
+model. Tracing the `parentID` chain, all **descendant** sessions of the current
+one participate — a subagent's own subagents count too. While a session is
+`busy`, its model enters the badge computation:
+
+- If any busy subagent has a matching rule and is in peak hours, the badge
+  shows `[PEAK]`, whatever the main model says (`peak` wins).
+- Otherwise the badge follows the main model's state.
+- Idle or deleted subagent sessions are ignored.
+- Subagent sessions whose model has no configured peak hours add nothing.
+- `session.status` events refresh the badge immediately when a subagent goes
+  busy or idle; no need to wait for the next poll tick.
+
+`alwaysShow` only affects the main model; a subagent never renders a badge from
+the fallback windows. Set `subagents: false` to ignore subagents entirely.
+
+### alwaysShow
+
+By default the plugin shows nothing for models without a matching rule. Set
+`alwaysShow: true` to always render a badge in the prompt bar: unmatched main
+models use the top-level `windows` / `weekdaysOnly` (defaults or your
+overrides). Combined with `subagents`, a busy subagent in peak hours still wins
+over an off-peak main model.
 
 ## Background: peak pricing is property of channel + model
 
