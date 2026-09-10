@@ -15,7 +15,9 @@ const RGBA = (r: number) => ({ r, g: 0, b: 0, a: 1 })
 type Badge = { label: string; peak: boolean } | undefined
 type Instance = {
   badge: (sessionID?: string) => Badge
+  badgeText: (sessionID?: string) => string
   refresh: () => void
+  applyRecentModel: () => void
   events: Array<{ type: string; handler: (e: unknown) => void }>
   disposed: Array<() => void>
   registered: Array<Record<string, unknown>>
@@ -83,7 +85,9 @@ async function init(
   return {
     ...instance,
     badge: mod.__test.badge as (sessionID?: string) => Badge,
+    badgeText: mod.__test.badgeText as (sessionID?: string) => string,
     refresh: mod.__test.refresh as () => void,
+    applyRecentModel: mod.__test.applyRecentModel as () => void,
   }
 }
 
@@ -160,6 +164,74 @@ describe("config fallback and states", () => {
   })
 })
 
+describe("detected model in badge text", () => {
+  test("default: badge text shows label only, no model", async () => {
+    const instance = await init("opencode-go/deepseek-v4-flash")
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badgeText("s1")).toBe("[PEAK]")
+  })
+
+  test("default: no badge text when no rule matches", async () => {
+    const instance = await init("opencode-go/glm-5.3-flash")
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badgeText("s1")).toBe("")
+  })
+
+  test("default: picked model does not appear in badge text", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "peak-badge-"))
+    writeFileSync(
+      join(dir, "model.json"),
+      JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
+    )
+    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, dir)
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badgeText("s1")).toBe("")
+    instance.applyRecentModel()
+    expect(instance.badgeText("s1")).toBe("[PEAK]")
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe("debug mode shows model", () => {
+  test("debug: true shows model key alongside the label", async () => {
+    const instance = await init("opencode-go/deepseek-v4-flash", [], () => undefined, "", undefined, { debug: true })
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badgeText("s1")).toBe("[PEAK] opencode-go/deepseek-v4-flash")
+  })
+
+  test("debug: true shows only model key when no rule matches", async () => {
+    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, "", undefined, { debug: true })
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badgeText("s1")).toBe("opencode-go/glm-5.3-flash")
+  })
+
+  test("debug: true shows picked model after session pick", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "peak-badge-"))
+    writeFileSync(
+      join(dir, "model.json"),
+      JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
+    )
+    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, dir, undefined, { debug: true })
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badgeText("s1")).toBe("opencode-go/glm-5.3-flash")
+    instance.applyRecentModel()
+    expect(instance.badgeText("s1")).toBe("[PEAK] opencode-go/deepseek-v4-flash")
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
 describe("untracked default model", () => {
   let instance: Instance
   beforeAll(async () => {
@@ -201,6 +273,61 @@ describe("home model from recent model.json", () => {
     instance.refresh()
     expect(instance.badge(undefined)).toEqual({ label: "[OFF-PEAK]", peak: false })
     rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe("model picked in a session", () => {
+  test("pick updates the session badge before a prompt", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "peak-badge-"))
+    writeFileSync(
+      join(dir, "model.json"),
+      JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
+    )
+    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, dir)
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("s1")).toBeUndefined()
+    instance.applyRecentModel()
+    expect(instance.badge("s1")).toEqual({ label: "[PEAK]", peak: true })
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("navigating away and back clears the picked model", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "peak-badge-"))
+    writeFileSync(
+      join(dir, "model.json"),
+      JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
+    )
+    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, dir)
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    instance.badge("s1")
+    instance.applyRecentModel()
+    expect(instance.badge("s1")).toEqual({ label: "[PEAK]", peak: true })
+    instance.badge("s2")
+    expect(instance.badge("s1")).toBeUndefined()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("session.get does not clobber a newer event-tracked model", async () => {
+    const instance = await init("opencode-go/glm-5.3-flash", [], () => ({
+      model: { id: "glm-5.3-flash", providerID: "opencode-go" },
+    }))
+    cleanups.push(...instance.disposed)
+    const switched = instance.events.find((e) => e.type === "session.next.model.switched")!
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("s1")).toBeUndefined()
+    switched.handler({
+      id: "w1",
+      type: "session.next.model.switched",
+      properties: { timestamp: 1, sessionID: "s1", model: { id: "deepseek-v4-pro", providerID: "opencode-go", variant: "" } },
+    })
+    expect(instance.badge("s1")).toEqual({ label: "[PEAK]", peak: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(instance.badge("s1")).toEqual({ label: "[PEAK]", peak: true })
   })
 })
 
