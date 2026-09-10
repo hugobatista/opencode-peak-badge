@@ -4,6 +4,7 @@ import {
   inWindow,
   isPeakUtc,
   matchRule,
+  mergeBadges,
   modelKey,
   parseHHMM,
   parseWindows,
@@ -164,4 +165,31 @@ describe("badgeFor", () => {
   test("no rule -> undefined", () => expect(badgeFor(d("2026-09-07T08:30:00Z"), undefined, labels)).toBeUndefined())
   test("untracked model -> undefined", () =>
     expect(badgeFor(d("2026-09-07T08:30:00Z"), matchRule(resolveRules({}), modelKey("opencode-go", "glm-5.3-flash")), labels)).toBeUndefined())
+})
+
+describe("mergeBadges", () => {
+  const labels = { peak: "[PEAK]", offPeak: "[OFF-PEAK]" }
+  const flash = matchRule(resolveRules({}), modelKey("opencode-go", "deepseek-v4-flash"))
+  const peak = badgeFor(d("2026-09-07T08:30:00Z"), flash, labels)
+  const off = badgeFor(d("2026-09-07T12:00:00Z"), flash, labels)
+  test("empty -> undefined", () => expect(mergeBadges([])).toBeUndefined())
+  test("all undefined -> undefined", () => expect(mergeBadges([undefined, undefined])).toBeUndefined())
+  test("single off-peak passes through", () => expect(mergeBadges([off])).toEqual(off))
+  test("single peak passes through", () => expect(mergeBadges([peak])).toEqual(peak))
+  test("undefined and off-peak -> off-peak", () => expect(mergeBadges([undefined, off])).toEqual(off))
+  test("peak wins over off-peak", () => expect(mergeBadges([off, peak])).toEqual(peak))
+  test("later off-peak does not override peak", () => expect(mergeBadges([peak, off])).toEqual(peak))
+})
+
+describe("resolveRules fallback", () => {
+  test("uses top-level windows and weekdaysOnly", () => {
+    const rules = resolveRules({ windows: [["09:00", "11:00"]], weekdaysOnly: false })
+    expect(rules.fallback.windows).toEqual([{ start: 540, end: 660 }])
+    expect(rules.fallback.weekdaysOnly).toBe(false)
+  })
+  test("uses default windows and weekday-only when unset", () => {
+    const rules = resolveRules({})
+    expect(rules.fallback.windows).toEqual(windows)
+    expect(rules.fallback.weekdaysOnly).toBe(true)
+  })
 })

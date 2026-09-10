@@ -1,6 +1,6 @@
 {
   "name": "opencode-peak-badge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "OpenCode TUI plugin: live [PEAK]/[OFF-PEAK] badge for any model with configured peak hours. Provider-agnostic; ships with DeepSeek V4 defaults.",
   "type": "module",
   "license": "MIT",
