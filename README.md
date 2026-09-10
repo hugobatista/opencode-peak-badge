@@ -25,7 +25,10 @@ window boundary.
   last-used model from OpenCode's `model.json` and watches that file, so the
   badge updates immediately when you pick a model, instead of waiting for the
   next poll tick.
-- Shows nothing for models without peak hours (for example `glm-5.3-flash`).
+- Shows nothing for models without configured peak hours.
+- Provider-agnostic: track any model that has peak pricing by adding a rule
+  under `models`. Built-in defaults cover the DeepSeek V4 family, which is
+  where peak hours are known today.
 
 ## Requirements
 
@@ -93,15 +96,9 @@ Add options as the second element of a tuple entry:
       "/home/your-user/code/projects/opencode-peak-badge/src/index.tsx",
       {
         "models": [
-          "opencode-go/deepseek-v4-flash",
-          "opencode-go/deepseek-v4-pro",
-          "opencode-go/deepseek-v4-flash-vision-exp",
-          "opencode/deepseek-v4-flash",
-          "opencode/deepseek-v4-pro",
-          "opencode/deepseek-v4-flash-vision-exp",
-          "deepseek/deepseek-v4-flash",
-          "deepseek/deepseek-v4-pro",
-          "deepseek/deepseek-v4-flash-vision-exp"
+          "re:^opencode-go/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
+          "re:^opencode/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
+          "re:^deepseek/deepseek-(v4-)?(flash|pro)(-vision-exp)?$"
         ],
         "windows": [["01:00", "04:00"], ["06:00", "10:00"]],
         "weekdaysOnly": true,
@@ -118,7 +115,7 @@ Add options as the second element of a tuple entry:
 
 | Option | Default | Description |
 |---|---|---|
-| `models` | the 9 DeepSeek V4 models on OpenCode Go, OpenCode Zen, and DeepSeek direct | Active models with peak hours. Each entry is a `"provider/model"` string (inherits `windows`/`weekdaysOnly`) or an object `{ id, windows?, weekdaysOnly? }` for per-model overrides. Matching is exact `provider/model` (case-insensitive). |
+| `models` | built-in patterns for the DeepSeek V4 family (OpenCode Go, OpenCode Zen, DeepSeek direct) | Models with peak hours. Override to track any `provider/model`. Each entry is a `"provider/model"` exact string, a `"re:<pattern>"` regex string, or an object with per-model `windows`/`weekdaysOnly` overrides. Matching is against the full `provider/model` key (case-insensitive). Exact `id` entries win over regex patterns; otherwise the first matching entry in list order wins. |
 | `windows` | `[["01:00","04:00"],["06:00","10:00"]]` | Peak windows in UTC. Each is `["HH:MM","HH:MM"]`, half-open `[start, end)`. A window whose end is ≤ its start wraps past midnight. |
 | `weekdaysOnly` | `true` | When true, weekends are always off-peak. |
 | `pollSeconds` | `30` | How often the badge recomputes (minimum 1). |
@@ -128,43 +125,81 @@ Add options as the second element of a tuple entry:
 `models` entries are additive to the defaults? No. Supplying `models`
 **replaces** the default list. Provide the full list you want tracked.
 
-## Background: why per-model peak hours
+## Background: peak pricing is property of channel + model
 
 Peak hours are a property of the **channel + model pair**, not of the model
-alone. They come from DeepSeek's upstream pricing and apply to the DeepSeek V4
-family on every channel that bills it: OpenCode Go, OpenCode Zen, and DeepSeek
-direct (BYOK). Matching is therefore by exact `provider/model` id, so a model
-only shows a badge on the channels that actually bill peak rates.
+alone. The plugin is provider-agnostic: it renders a badge whenever the active
+`provider/model` key matches a configured rule, and prices are billable at peak
+in the channels you configure. Add any model you care about — the plugin does
+not know or care which provider it belongs to.
 
-Current facts (per OpenCode docs):
+The built-in defaults target the DeepSeek V4 family, because that is where
+peak pricing is known today. Current facts (per OpenCode docs):
 
 - **OpenCode Go** — DeepSeek V4 Pro, V4 Flash and V4 Flash Vision Exp: peak =
   Mon–Fri 01:00–04:00 and 06:00–10:00 UTC; everything else, including weekends,
-  is off-peak (2× price in peak). No other Go model has peak hours.
+  is off-peak (2× price in peak). No other Go model has peak hours. OpenCode
+  also exposes Flash as the alias `opencode-go/deepseek-flash`; the default
+  pattern matches both spellings.
 - **OpenCode Zen** — bills the same DeepSeek V4 models (`opencode/deepseek-v4-*`)
-  at DeepSeek's list price, so the same peak windows apply. The zero-cost
-  `opencode/deepseek-v4-flash-free` variant is never at peak and is not tracked.
+  at DeepSeek's list price, so the same peak windows apply.
 - **DeepSeek direct API (BYOK)** — the same peak windows apply to
   `deepseek/deepseek-v4-*`.
-- **GLM** — has peak hours (14:00–18:00 UTC+8) only on z.ai's own GLM Coding
-  Plan, not via OpenCode channels.
 
 In Lisbon time (WEST, UTC+1) the DeepSeek windows are 02:00–05:00 and
 07:00–11:00; in winter (WET, UTC+0) the UTC windows apply as-is. The plugin
 computes in UTC, so DST is a non-issue.
 
-### Adding a model later
+### Exact matching
 
-Add an entry with its own windows. It overrides the shared `windows` default:
+Match one `provider/model` id exactly (case-insensitive). This is the simplest
+form and avoids regex entirely:
 
 ```jsonc
 {
   "models": [
     "opencode-go/deepseek-v4-flash",
-    { "id": "provider/new-model", "windows": [["09:00", "17:00"]] }
+    "opencode/deepseek-v4-pro"
   ]
 }
 ```
+
+Give a single model its own windows or weekday behavior with the object form:
+
+```jsonc
+{
+  "models": [
+    { "id": "opencode-go/deepseek-v4-flash", "windows": [["09:00", "17:00"]], "weekdaysOnly": false }
+  ]
+}
+```
+
+### Regex matching
+
+Exact ids match one model. To track every current and future model id that
+fits a pattern, use the `re:` prefix on a string, or the `pattern` object form
+(which also allows per-model overrides):
+
+```jsonc
+{
+  "models": [
+    "re:^opencode-go/deepseek",
+    { "pattern": "^my-provider/.*$", "windows": [["09:00", "17:00"]] }
+  ]
+}
+```
+
+Matching rules:
+
+- Patterns are compiled case-insensitively and tested against the full
+  `provider/model` key.
+- An exact `id` entry always beats a regex pattern, regardless of list order.
+- Otherwise the first matching entry wins (list order).
+- An invalid or empty pattern is ignored.
+
+Escaping: `models` is JSON, so backslashes must be doubled. For example, to
+match a literal dot use `"re:^opencode-go/deepseek\\.v4"`. To avoid escaping,
+prefer plain `-` and `?` characters as in the defaults above.
 
 ## Evaluation
 
