@@ -4,10 +4,12 @@ import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import { createSignal } from "solid-js"
 import {
   badgeFor,
+  matchRule,
   modelKey,
   resolveRules,
   type PeakHoursOptions,
   type ResolvedModelRule,
+  type RuleSet,
 } from "./core"
 
 type ModelRef = { providerID: string; modelID: string }
@@ -23,7 +25,7 @@ function currentNow(): Date {
 
 const tui: TuiPlugin = async (api, rawOptions) => {
   const options: PeakHoursOptions = (rawOptions ?? {}) as PeakHoursOptions
-  const rules: Map<string, ResolvedModelRule> = resolveRules(options)
+  const rules: RuleSet = resolveRules(options)
   const labels = {
     peak: options.labelPeak ?? "[PEAK]",
     offPeak: options.labelOffPeak ?? "[OFF-PEAK]",
@@ -95,7 +97,7 @@ const tui: TuiPlugin = async (api, rawOptions) => {
       ref = sessionID ? configModelRef() : (configModelRef() ?? homeModelRef())
       if (!ref) return undefined
     }
-    return rules.get(modelKey(ref.providerID, ref.modelID))
+    return matchRule(rules, modelKey(ref.providerID, ref.modelID))
   }
 
   function configModelRef(): ModelRef | undefined {

@@ -3,6 +3,7 @@ import {
   badgeFor,
   inWindow,
   isPeakUtc,
+  matchRule,
   modelKey,
   parseHHMM,
   parseWindows,
@@ -56,20 +57,28 @@ describe("modelKey", () => {
 
 describe("resolveRules defaults", () => {
   const defaults = resolveRules({})
-  test("9 deepseek models across opencode-go, opencode zen and deepseek", () =>
-    expect([...defaults.keys()]).toEqual([
-      "opencode-go/deepseek-v4-flash",
-      "opencode-go/deepseek-v4-pro",
-      "opencode-go/deepseek-v4-flash-vision-exp",
-      "opencode/deepseek-v4-flash",
-      "opencode/deepseek-v4-pro",
-      "opencode/deepseek-v4-flash-vision-exp",
-      "deepseek/deepseek-v4-flash",
-      "deepseek/deepseek-v4-pro",
-      "deepseek/deepseek-v4-flash-vision-exp",
+  test("3 patterns for the deepseek family across opencode-go, opencode zen and deepseek", () =>
+    expect(defaults.patterns.map((rule) => rule.id)).toEqual([
+      "^opencode-go/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
+      "^opencode/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
+      "^deepseek/deepseek-(v4-)?(flash|pro)(-vision-exp)?$",
     ]))
-  test("windows", () => expect(defaults.get("opencode-go/deepseek-v4-flash")?.windows).toEqual(windows))
-  test("weekdaysOnly", () => expect(defaults.get("opencode-go/deepseek-v4-flash")?.weekdaysOnly).toBe(true))
+  test("deepseek-v4-flash on opencode-go matches", () =>
+    expect(matchRule(defaults, modelKey("opencode-go", "deepseek-v4-flash"))).toBeDefined())
+  test("deepseek-v4-pro on opencode matches", () =>
+    expect(matchRule(defaults, modelKey("opencode", "deepseek-v4-pro"))).toBeDefined())
+  test("deepseek-v4-flash-vision-exp on deepseek matches", () =>
+    expect(matchRule(defaults, modelKey("deepseek", "deepseek-v4-flash-vision-exp"))).toBeDefined())
+  test("deepseek-flash alias matches", () =>
+    expect(matchRule(defaults, modelKey("opencode-go", "deepseek-flash"))).toBeDefined())
+  test("non-deepseek model not matched", () =>
+    expect(matchRule(defaults, modelKey("opencode-go", "glm-5.3-flash"))).toBeUndefined())
+  test("qwen model not matched", () =>
+    expect(matchRule(defaults, modelKey("opencode-go", "qwen3.8-flash"))).toBeUndefined())
+  test("windows", () =>
+    expect(matchRule(defaults, modelKey("opencode-go", "deepseek-v4-flash"))?.windows).toEqual(windows))
+  test("weekdaysOnly", () =>
+    expect(matchRule(defaults, modelKey("opencode-go", "deepseek-v4-flash"))?.weekdaysOnly).toBe(true))
 })
 
 describe("resolveRules inheritance and per-entry override", () => {
@@ -82,26 +91,77 @@ describe("resolveRules inheritance and per-entry override", () => {
     ],
   })
   test("string entry inherits top-level windows", () =>
-    expect(custom.get("opencode-go/deepseek-v4-flash")?.windows).toEqual([{ start: 540, end: 660 }]))
+    expect(matchRule(custom, modelKey("opencode-go", "deepseek-v4-flash"))?.windows).toEqual([{ start: 540, end: 660 }]))
   test("string entry inherits top-level weekdaysOnly", () =>
-    expect(custom.get("opencode-go/deepseek-v4-flash")?.weekdaysOnly).toBe(false))
-  test("object entry overrides windows", () => expect(custom.get("zai/glm-5.3")?.windows).toEqual([{ start: 840, end: 1080 }]))
-  test("object entry overrides weekdaysOnly", () => expect(custom.get("zai/glm-5.3")?.weekdaysOnly).toBe(true))
+    expect(matchRule(custom, modelKey("opencode-go", "deepseek-v4-flash"))?.weekdaysOnly).toBe(false))
+  test("object entry overrides windows", () =>
+    expect(matchRule(custom, modelKey("zai", "glm-5.3"))?.windows).toEqual([{ start: 840, end: 1080 }]))
+  test("object entry overrides weekdaysOnly", () =>
+    expect(matchRule(custom, modelKey("zai", "glm-5.3"))?.weekdaysOnly).toBe(true))
 })
 
 describe("resolveRules normalization", () => {
   const normalized = resolveRules({ models: [" OPENCODE-GO/DeepSeek-V4-Flash ", "", { id: "" }] })
   test("keys normalized and empties skipped", () =>
-    expect([...normalized.keys()]).toEqual(["opencode-go/deepseek-v4-flash"]))
+    expect([...normalized.exact.keys()]).toEqual(["opencode-go/deepseek-v4-flash"]))
+})
+
+describe("resolveRules regex matching", () => {
+  test("re: string pattern matches and inherits shared windows", () => {
+    const rules = resolveRules({ models: ["re:^opencode-go/deepseek"] })
+    const rule = matchRule(rules, modelKey("opencode-go", "deepseek-v4-flash"))
+    expect(rule).toBeDefined()
+    expect(rule?.windows).toEqual(windows)
+    expect(rule?.weekdaysOnly).toBe(true)
+  })
+
+  test("{ pattern } object overrides windows", () => {
+    const rules = resolveRules({
+      models: [{ pattern: "^opencode-go/deepseek", windows: [["14:00", "18:00"]] }],
+    })
+    const rule = matchRule(rules, modelKey("opencode-go", "deepseek-flash"))
+    expect(rule).toBeDefined()
+    expect(rule?.windows).toEqual([{ start: 840, end: 1080 }])
+  })
+
+  test("pattern matching is case-insensitive on the full key", () => {
+    const rules = resolveRules({ models: ["re:^OPENCODE-GO/DeepSeek"] })
+    expect(matchRule(rules, modelKey("opencode-go", "deepseek-v4-flash"))).toBeDefined()
+  })
+
+  test("exact entry beats an earlier pattern", () => {
+    const rules = resolveRules({
+      models: ["re:^opencode-go/deepseek", "opencode-go/deepseek-flash"],
+    })
+    expect(matchRule(rules, modelKey("opencode-go", "deepseek-flash"))?.id).toBe("opencode-go/deepseek-flash")
+  })
+
+  test("patterns match in declaration order, first wins", () => {
+    const rules = resolveRules({
+      models: ["re:^opencode-go/deepseek-v4-flash", "re:^opencode-go/deepseek"],
+    })
+    expect(matchRule(rules, modelKey("opencode-go", "deepseek-v4-flash"))?.id).toBe("^opencode-go/deepseek-v4-flash")
+  })
+
+  test("invalid regex pattern is dropped", () => {
+    const rules = resolveRules({ models: ["re:[", "opencode-go/deepseek-v4-flash"] })
+    expect(rules.patterns).toEqual([])
+    expect([...rules.exact.keys()]).toEqual(["opencode-go/deepseek-v4-flash"])
+  })
+
+  test("empty re: pattern is dropped", () => {
+    const rules = resolveRules({ models: ["re:^opencode-go/deepseek", "re:"] })
+    expect(rules.patterns.map((rule) => rule.id)).toEqual(["^opencode-go/deepseek"])
+  })
 })
 
 describe("badgeFor", () => {
-  const flash = resolveRules({}).get("opencode-go/deepseek-v4-flash")
+  const flash = matchRule(resolveRules({}), modelKey("opencode-go", "deepseek-v4-flash"))
   const labels = { peak: "[PEAK]", offPeak: "[OFF-PEAK]" }
   test("peak", () => expect(badgeFor(d("2026-09-07T08:30:00Z"), flash, labels)).toEqual({ label: "[PEAK]", peak: true }))
   test("off-peak", () => expect(badgeFor(d("2026-09-07T12:00:00Z"), flash, labels)).toEqual({ label: "[OFF-PEAK]", peak: false }))
   test("weekend", () => expect(badgeFor(d("2026-09-12T07:00:00Z"), flash, labels)).toEqual({ label: "[OFF-PEAK]", peak: false }))
   test("no rule -> undefined", () => expect(badgeFor(d("2026-09-07T08:30:00Z"), undefined, labels)).toBeUndefined())
   test("untracked model -> undefined", () =>
-    expect(badgeFor(d("2026-09-07T08:30:00Z"), resolveRules({}).get("opencode-go/glm-5.3-flash"), labels)).toBeUndefined())
+    expect(badgeFor(d("2026-09-07T08:30:00Z"), matchRule(resolveRules({}), modelKey("opencode-go", "glm-5.3-flash")), labels)).toBeUndefined())
 })
