@@ -17,6 +17,7 @@ export type PeakHoursOptions = {
   labelOffPeak?: string
   subagents?: boolean
   alwaysShow?: boolean
+  debug?: boolean
 }
 
 export type ResolvedModelRule = {

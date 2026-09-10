@@ -20,17 +20,17 @@ restart needed when a session crosses a peak window boundary.
   with `alwaysShow: true`.
 - `[PEAK]` renders in the theme's warning color. `[OFF-PEAK]` renders in the
   muted color. The badge shows in **both** states for tracked models.
-- Recomputes every `pollSeconds` (default 30) and on every model switch.
+- Recomputes every `pollSeconds` (default 10) and watches `model.json` for
+  immediate model updates.
 - Tracks all descendant subagent sessions through their `parentID` chain.
   While a subagent session is busy, its model is checked against the peak
   windows. Peak wins: if any busy subagent is in peak hours, the badge shows
   `[PEAK]`. Disable with `subagents: false`.
 - Resolves the active model at session start from `session.created` /
   `session.updated` events, with a `session.get` fallback, so the badge shows
-  before the first prompt. On the home screen (no session yet) it uses the
-  last-used model from OpenCode's `model.json` and watches that file, so the
-  badge updates immediately when you pick a model, instead of waiting for the
-  next poll tick.
+  before the first prompt. It also watches OpenCode's `model.json`, so picking
+  a model updates the badge immediately — both on the home screen and in a
+  session — instead of waiting for the next poll tick or the next prompt.
 - Shows nothing for models without configured peak hours, unless
   `alwaysShow: true` forces the badge for the main model from the top-level
   `windows` / `weekdaysOnly`.
@@ -110,7 +110,7 @@ Add options as the second element of a tuple entry:
         ],
         "windows": [["01:00", "04:00"], ["06:00", "10:00"]],
         "weekdaysOnly": true,
-        "pollSeconds": 30,
+        "pollSeconds": 10,
         "subagents": true,
         "alwaysShow": false,
         "labelPeak": "[PEAK]",
@@ -128,7 +128,7 @@ Add options as the second element of a tuple entry:
 | `models` | built-in patterns for the DeepSeek V4 family (OpenCode Go, OpenCode Zen, DeepSeek direct) | Models with peak hours. Override to track any `provider/model`. Each entry is a `"provider/model"` exact string, a `"re:<pattern>"` regex string, or an object with per-model `windows`/`weekdaysOnly` overrides. Matching is against the full `provider/model` key (case-insensitive). Exact `id` entries win over regex patterns; otherwise the first matching entry in list order wins. |
 | `windows` | `[["01:00","04:00"],["06:00","10:00"]]` | Peak windows in UTC. Each is `["HH:MM","HH:MM"]`, half-open `[start, end)`. A window whose end is ≤ its start wraps past midnight. |
 | `weekdaysOnly` | `true` | When true, weekends are always off-peak. |
-| `pollSeconds` | `30` | How often the badge recomputes (minimum 1). |
+| `pollSeconds` | `10` | How often the badge recomputes (minimum 1). Also used as a safety net to re-read `model.json` for picked model updates. |
 | `subagents` | `true` | Track subagent sessions while they are busy. Peak wins over the main model's state. |
 | `alwaysShow` | `false` | When true, always show a badge for the main model, using the top-level `windows`/`weekdaysOnly` when no model rule matches. |
 | `labelPeak` | `"[PEAK]"` | Text shown during peak hours. |

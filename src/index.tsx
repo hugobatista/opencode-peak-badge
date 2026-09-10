@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { readFileSync, statSync, watch } from "node:fs"
+import { readFileSync, watch } from "node:fs"
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import { createMemo, createSignal } from "solid-js"
 import {
@@ -31,13 +31,16 @@ const tui: TuiPlugin = async (api, rawOptions) => {
     peak: options.labelPeak ?? "[PEAK]",
     offPeak: options.labelOffPeak ?? "[OFF-PEAK]",
   }
-  const pollSeconds = Math.max(1, options.pollSeconds ?? 30)
+  const pollSeconds = Math.max(1, options.pollSeconds ?? 10)
   const subagents = options.subagents ?? true
   const alwaysShow = options.alwaysShow ?? false
+  const debug = options.debug ?? false
 
   const [tick, setTick] = createSignal(currentNow().getTime())
   const [version, setVersion] = createSignal(0)
   const tracked = new Map<string, ModelRef>()
+  const picked = new Map<string, ModelRef>()
+  let activeSessionID: string | undefined
   const fetching = new Set<string>()
   const childParent = new Map<string, string>()
   const children = new Map<string, Map<string, ModelRef>>()
@@ -102,6 +105,7 @@ const tui: TuiPlugin = async (api, rawOptions) => {
   api.event.on("session.deleted", (event) => {
     const sessionID = event.properties.info.id
     let changed = tracked.delete(sessionID)
+    if (picked.delete(sessionID)) changed = true
     const childMap = children.get(sessionID)
     if (childMap) {
       for (const childID of childMap.keys()) childParent.delete(childID)
@@ -116,15 +120,20 @@ const tui: TuiPlugin = async (api, rawOptions) => {
     if (changed) setVersion((value) => value + 1)
   })
 
-  const timer = setInterval(() => setTick(currentNow().getTime()), pollSeconds * 1000)
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined
+  const timer = setInterval(() => {
+    setTick(currentNow().getTime())
+    applyRecentModel()
+  }, pollSeconds * 1000)
   api.lifecycle.onDispose(() => {
     clearInterval(timer)
+    clearTimeout(debounceTimer)
     homeWatcher?.close()
   })
 
   function mainRef(sessionID: string | undefined): ModelRef | undefined {
     version()
-    let ref: ModelRef | undefined = sessionID ? tracked.get(sessionID) : undefined
+    let ref: ModelRef | undefined = sessionID ? (picked.get(sessionID) ?? tracked.get(sessionID)) : undefined
     if (!ref && sessionID) {
       const messages = api.state.session.messages(sessionID)
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -142,7 +151,7 @@ const tui: TuiPlugin = async (api, rawOptions) => {
           .then((result) => {
             fetching.delete(sessionID)
             const model = result.data?.model
-            if (model?.providerID && model.id) {
+            if (model?.providerID && model.id && !tracked.has(sessionID)) {
               tracked.set(sessionID, { providerID: model.providerID, modelID: model.id })
               setVersion((value) => value + 1)
             }
@@ -167,54 +176,47 @@ const tui: TuiPlugin = async (api, rawOptions) => {
   let homeRef: ModelRef | undefined
   let homeRefChecked = 0
   function homeModelRef(): ModelRef | undefined {
-    if (Date.now() - homeRefChecked > 5000) refreshHomeModel()
+    if (Date.now() - homeRefChecked > 5000) applyRecentModel()
     return homeRef
   }
 
-  function refreshHomeModel(): void {
-    homeRef = readRecentModel()
-    homeRefChecked = Date.now()
-  }
+  let lastAppliedKey: string | undefined
 
-  function readRecentModel(): ModelRef | undefined {
+  function applyRecentModel(): void {
     const state = api.state.path.state
-    if (!state) return undefined
+    if (!state) return
     try {
       const raw = readFileSync(`${state}/model.json`, "utf8")
       const parsed = JSON.parse(raw) as { recent?: Array<{ providerID?: string; modelID?: string }> }
       const recent = parsed.recent?.find((model) => model?.providerID && model?.modelID)
-      if (recent) return { providerID: recent.providerID!, modelID: recent.modelID! }
-    } catch {
-      // model.json missing or unreadable
-    }
-    return undefined
-  }
-
-  // Watch model.json so a model picked on the home screen updates the badge
-  // immediately instead of waiting for the next poll tick. OpenCode writes the
-  // file atomically (rename of a temp file), so the watcher reports the temp
-  // name — compare the mtime instead of the reported filename.
-  const stateDir = api.state.path.state
-  let homeMtime = 0
-  function refreshFromWatcher(): void {
-    if (!stateDir) return
-    try {
-      const stat = statSync(`${stateDir}/model.json`)
-      if (stat.mtimeMs === homeMtime) return
-      homeMtime = stat.mtimeMs
-      refreshHomeModel()
+      const key = recent ? `${recent.providerID}/${recent.modelID}` : undefined
+      if (key === lastAppliedKey) return
+      lastAppliedKey = key
+      homeRef = recent ? { providerID: recent.providerID!, modelID: recent.modelID! } : undefined
+      homeRefChecked = Date.now()
+      if (activeSessionID && homeRef) picked.set(activeSessionID, homeRef)
       setVersion((value) => value + 1)
     } catch {
-      if (homeMtime !== 0) {
-        homeMtime = 0
+      if (lastAppliedKey !== undefined) {
+        lastAppliedKey = undefined
         homeRef = undefined
       }
     }
   }
+
+  // Watch model.json so a model picked on the home screen updates the badge
+  // immediately instead of waiting for the next poll tick. OpenCode writes the
+  // file atomically (rename of a temp file), so we debounce the read to
+  // ensure it happens after the rename completes.
+  const stateDir = api.state.path.state
+  function scheduleModelRefresh(): void {
+    clearTimeout(debounceTimer)
+    debounceTimer = setTimeout(() => applyRecentModel(), 100)
+  }
   const homeWatcher = stateDir
     ? (() => {
         try {
-          return watch(stateDir, () => refreshFromWatcher())
+          return watch(stateDir, () => scheduleModelRefresh())
         } catch {
           return undefined
         }
@@ -240,7 +242,11 @@ const tui: TuiPlugin = async (api, rawOptions) => {
     return refs
   }
 
-  function badge(sessionID: string | undefined) {
+  function badgeView(sessionID: string | undefined): { state: BadgeState | undefined; model: ModelRef | undefined } {
+    if (sessionID !== activeSessionID) {
+      if (sessionID) picked.delete(sessionID)
+      activeSessionID = sessionID
+    }
     const now = new Date(tick())
     const states: BadgeState[] = []
     const main = mainRef(sessionID)
@@ -256,30 +262,41 @@ const tui: TuiPlugin = async (api, rawOptions) => {
         if (state) states.push(state)
       }
     }
-    return mergeBadges(states)
+    return { state: mergeBadges(states), model: main }
+  }
+
+  function badge(sessionID: string | undefined) {
+    return badgeView(sessionID).state
+  }
+
+  function badgeText(view: { state: BadgeState | undefined; model: ModelRef | undefined }): string {
+    const model = debug && view.model ? `${view.model.providerID}/${view.model.modelID}` : ""
+    return [view.state?.label ?? "", model].filter(Boolean).join(" ")
   }
 
   api.slots.register({
     slots: {
       session_prompt_right: (ctx, props) => {
         const theme = ctx.theme.current
-        const state = createMemo(() => badge(props.session_id))
+        const view = createMemo(() => badgeView(props.session_id))
         return (
-          <text fg={state()?.peak ? theme.warning : theme.textMuted}>{state()?.label ?? ""}</text>
+          <text fg={view().state?.peak ? theme.warning : theme.textMuted}>{badgeText(view())}</text>
         )
       },
       home_prompt_right: (ctx) => {
         const theme = ctx.theme.current
-        const state = createMemo(() => badge(undefined))
+        const view = createMemo(() => badgeView(undefined))
         return (
-          <text fg={state()?.peak ? theme.warning : theme.textMuted}>{state()?.label ?? ""}</text>
+          <text fg={view().state?.peak ? theme.warning : theme.textMuted}>{badgeText(view())}</text>
         )
       },
     },
   })
 
   __test.badge = badge
+  __test.badgeText = (sessionID?: string) => badgeText(badgeView(sessionID))
   __test.refresh = () => setTick(currentNow().getTime())
+  __test.applyRecentModel = applyRecentModel
 }
 
 type TestBadge = (sessionID?: string) => ReturnType<typeof badgeFor>
@@ -287,8 +304,10 @@ type TestBadge = (sessionID?: string) => ReturnType<typeof badgeFor>
 // Test hook. The plugin loader reads the default export only; named exports are ignored.
 export const __test: {
   badge: TestBadge | undefined
+  badgeText: ((sessionID?: string) => string) | undefined
   refresh: (() => void) | undefined
-} = { badge: undefined, refresh: undefined }
+  applyRecentModel: (() => void) | undefined
+} = { badge: undefined, badgeText: undefined, refresh: undefined, applyRecentModel: undefined }
 
 const plugin: TuiPluginModule & { id: string } = {
   id: "peak-badge",
