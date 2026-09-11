@@ -1,6 +1,6 @@
 import { plugin as registerBunPlugin } from "bun"
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { TuiPluginApi, TuiPluginMeta } from "@opencode-ai/plugin/tui"
@@ -25,7 +25,6 @@ type Instance = {
 
 function makeApi(
   configModel: string,
-  history: Array<Record<string, unknown>> = [],
   sessionGet: (sessionID: string) => { model?: { id: string; providerID: string } } | undefined = () => undefined,
   statePath = "",
   statusOf: (sessionID: string) => { type: string } | undefined = () => undefined,
@@ -55,7 +54,6 @@ function makeApi(
     state: {
       config: { model: configModel },
       session: {
-        messages: (_id: string) => history,
         status: statusOf,
       },
       path: { state: statePath },
@@ -71,13 +69,12 @@ function makeApi(
 
 async function init(
   configModel: string,
-  history: Array<Record<string, unknown>> = [],
   sessionGet: (sessionID: string) => { model?: { id: string; providerID: string } } | undefined = () => undefined,
   statePath = "",
   statusOf: (sessionID: string) => { type: string } | undefined = () => undefined,
   rawOptions?: Record<string, unknown>,
 ): Promise<Instance> {
-  const instance = makeApi(configModel, history, sessionGet, statePath, statusOf)
+  const instance = makeApi(configModel, sessionGet, statePath, statusOf)
   await mod.default.tui(instance.api as unknown as TuiPluginApi, rawOptions, {
     state: "first",
     id: "peak-badge",
@@ -187,7 +184,7 @@ describe("detected model in badge text", () => {
       join(dir, "model.json"),
       JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
     )
-    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, dir)
+    const instance = await init("opencode-go/glm-5.3-flash", () => undefined, dir)
     cleanups.push(...instance.disposed)
     setFake("2026-09-07T08:30:00Z")
     instance.refresh()
@@ -200,7 +197,7 @@ describe("detected model in badge text", () => {
 
 describe("debug mode shows model", () => {
   test("debug: true shows model key alongside the label", async () => {
-    const instance = await init("opencode-go/deepseek-v4-flash", [], () => undefined, "", undefined, { debug: true })
+    const instance = await init("opencode-go/deepseek-v4-flash", () => undefined, "", undefined, { debug: true })
     cleanups.push(...instance.disposed)
     setFake("2026-09-07T08:30:00Z")
     instance.refresh()
@@ -208,7 +205,7 @@ describe("debug mode shows model", () => {
   })
 
   test("debug: true shows only model key when no rule matches", async () => {
-    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, "", undefined, { debug: true })
+    const instance = await init("opencode-go/glm-5.3-flash", () => undefined, "", undefined, { debug: true })
     cleanups.push(...instance.disposed)
     setFake("2026-09-07T08:30:00Z")
     instance.refresh()
@@ -221,7 +218,7 @@ describe("debug mode shows model", () => {
       join(dir, "model.json"),
       JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
     )
-    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, dir, undefined, { debug: true })
+    const instance = await init("opencode-go/glm-5.3-flash", () => undefined, dir, undefined, { debug: true })
     cleanups.push(...instance.disposed)
     setFake("2026-09-07T08:30:00Z")
     instance.refresh()
@@ -253,7 +250,7 @@ describe("home model from recent model.json", () => {
       join(dir, "model.json"),
       JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
     )
-    const instance = await init("", [], () => undefined, dir)
+    const instance = await init("", () => undefined, dir)
     cleanups.push(...instance.disposed)
     setFake("2026-09-07T08:30:00Z")
     await instance.applyRecentModel()
@@ -268,12 +265,54 @@ describe("home model from recent model.json", () => {
       join(dir, "model.json"),
       JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
     )
-    const instance = await init("", [], () => undefined, dir)
+    const instance = await init("", () => undefined, dir)
     cleanups.push(...instance.disposed)
     setFake("2026-09-12T07:00:00Z")
     await instance.applyRecentModel()
     instance.refresh()
     expect(instance.badge(undefined)).toEqual({ label: "[OFF-PEAK]", peak: false })
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe("model.json watcher", () => {
+  test("an atomic model.json write refreshes the badge", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "peak-badge-"))
+    const instance = await init("", () => undefined, dir)
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge(undefined)).toBeUndefined()
+    writeFileSync(
+      join(dir, "model.json.tmp"),
+      JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
+    )
+    renameSync(join(dir, "model.json.tmp"), join(dir, "model.json"))
+    const deadline = Date.now() + 3000
+    while (Date.now() < deadline && !instance.badge(undefined)) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    expect(instance.badge(undefined)).toEqual({ label: "[PEAK]", peak: true })
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("an atomic model.json write refreshes an active session", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "peak-badge-"))
+    const instance = await init("opencode-go/glm-5.3-flash", () => undefined, dir)
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("s1")).toBeUndefined()
+    writeFileSync(
+      join(dir, "model.json.tmp"),
+      JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
+    )
+    renameSync(join(dir, "model.json.tmp"), join(dir, "model.json"))
+    const deadline = Date.now() + 3000
+    while (Date.now() < deadline && !instance.badge("s1")) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    expect(instance.badge("s1")).toEqual({ label: "[PEAK]", peak: true })
     rmSync(dir, { recursive: true, force: true })
   })
 })
@@ -285,7 +324,7 @@ describe("model picked in a session", () => {
       join(dir, "model.json"),
       JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
     )
-    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, dir)
+    const instance = await init("opencode-go/glm-5.3-flash", () => undefined, dir)
     cleanups.push(...instance.disposed)
     setFake("2026-09-07T08:30:00Z")
     instance.refresh()
@@ -301,7 +340,7 @@ describe("model picked in a session", () => {
       join(dir, "model.json"),
       JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
     )
-    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, dir)
+    const instance = await init("opencode-go/glm-5.3-flash", () => undefined, dir)
     cleanups.push(...instance.disposed)
     setFake("2026-09-07T08:30:00Z")
     instance.refresh()
@@ -314,7 +353,7 @@ describe("model picked in a session", () => {
   })
 
   test("session.get does not clobber a newer event-tracked model", async () => {
-    const instance = await init("opencode-go/glm-5.3-flash", [], () => ({
+    const instance = await init("opencode-go/glm-5.3-flash", () => ({
       model: { id: "glm-5.3-flash", providerID: "opencode-go" },
     }))
     cleanups.push(...instance.disposed)
@@ -340,7 +379,7 @@ describe("model change while in a session", () => {
       join(dir, "model.json"),
       JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
     )
-    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, dir)
+    const instance = await init("opencode-go/glm-5.3-flash", () => undefined, dir)
     cleanups.push(...instance.disposed)
     const updated = instance.events.find((e) => e.type === "session.updated")!
     setFake("2026-09-07T08:30:00Z")
@@ -406,7 +445,6 @@ describe("model change while in a session", () => {
   test("message.updated for a busy child feeds the parent badge", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "child2" ? { type: "busy" } : undefined),
@@ -474,18 +512,6 @@ describe("model tracking", () => {
   })
 })
 
-describe("history seeding", () => {
-  test("seeds model from last assistant message", async () => {
-    const seeded = await init("opencode-go/glm-5.3-flash", [
-      { role: "assistant", modelID: "deepseek-v4-flash", providerID: "opencode-go" },
-    ])
-    cleanups.push(...seeded.disposed)
-    setFake("2026-09-07T08:30:00Z")
-    seeded.refresh()
-    expect(seeded.badge("s4")).toEqual({ label: "[PEAK]", peak: true })
-  })
-})
-
 describe("model resolution at session start", () => {
   test("session.created seeds model before any prompt", async () => {
     const instance = await init("opencode-go/glm-5.3-flash")
@@ -523,7 +549,7 @@ describe("model resolution at session start", () => {
   })
 
   test("async session.get fallback resolves the badge", async () => {
-    const instance = await init("opencode-go/glm-5.3-flash", [], (sessionID) =>
+    const instance = await init("opencode-go/glm-5.3-flash", (sessionID) =>
       sessionID === "s99" ? { model: { id: "deepseek-v4-flash", providerID: "opencode-go" } } : undefined,
     )
     cleanups.push(...instance.disposed)
@@ -533,13 +559,29 @@ describe("model resolution at session start", () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(instance.badge("s99")).toEqual({ label: "[PEAK]", peak: true })
   })
+
+  test("session.get is only attempted once per session", async () => {
+    let calls = 0
+    const instance = await init("opencode-go/glm-5.3-flash", () => {
+      calls += 1
+      return undefined
+    })
+    cleanups.push(...instance.disposed)
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    instance.badge("s88")
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    instance.refresh()
+    instance.badge("s88")
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(calls).toBe(1)
+  })
 })
 
 describe("subagent tracking", () => {
   test("busy tracked child -> badge in peak", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "child1" ? { type: "busy" } : undefined),
@@ -562,7 +604,6 @@ describe("subagent tracking", () => {
   test("busy tracked child off-peak -> [OFF-PEAK]", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "child1" ? { type: "busy" } : undefined),
@@ -585,7 +626,6 @@ describe("subagent tracking", () => {
   test("idle child is not shown", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "child1" ? { type: "idle" } : undefined),
@@ -608,7 +648,6 @@ describe("subagent tracking", () => {
   test("untracked child is not shown", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "child1" ? { type: "busy" } : undefined),
@@ -631,7 +670,6 @@ describe("subagent tracking", () => {
   test("peak wins when main is off-peak and child is peak", async () => {
     const instance = await init(
       "opencode-go/deepseek-v4-pro",
-      [],
       () => undefined,
       "",
       (id) => (id === "child1" ? { type: "busy" } : undefined),
@@ -660,7 +698,6 @@ describe("subagent tracking", () => {
   test("subagents:false ignores children", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "child1" ? { type: "busy" } : undefined),
@@ -684,7 +721,6 @@ describe("subagent tracking", () => {
   test("deleted child clears the badge", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "child1" ? { type: "busy" } : undefined),
@@ -711,7 +747,6 @@ describe("subagent tracking", () => {
   test("child model set via session.updated", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "child1" ? { type: "busy" } : undefined),
@@ -742,7 +777,6 @@ describe("subagent tracking", () => {
   test("child model switched via session.next.model.switched", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "child1" ? { type: "busy" } : undefined),
@@ -777,7 +811,6 @@ describe("subagent tracking", () => {
   test("nested busy grandchild -> [PEAK]", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "grandchild1" ? { type: "busy" } : undefined),
@@ -808,7 +841,6 @@ describe("subagent tracking", () => {
   test("deleted parent clears its children", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "child1" ? { type: "busy" } : undefined),
@@ -836,7 +868,6 @@ describe("subagent tracking", () => {
     let statusOf: (id: string) => { type: string } | undefined = () => undefined
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => statusOf(id),
@@ -868,7 +899,7 @@ describe("subagent tracking", () => {
 
 describe("alwaysShow", () => {
   test("untracked main with alwaysShow:true -> badge from default windows", async () => {
-    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, "", undefined, {
+    const instance = await init("opencode-go/glm-5.3-flash", () => undefined, "", undefined, {
       alwaysShow: true,
     })
     cleanups.push(...instance.disposed)
@@ -878,7 +909,7 @@ describe("alwaysShow", () => {
   })
 
   test("untracked main with alwaysShow:true -> [OFF-PEAK] off-peak", async () => {
-    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, "", undefined, {
+    const instance = await init("opencode-go/glm-5.3-flash", () => undefined, "", undefined, {
       alwaysShow: true,
     })
     cleanups.push(...instance.disposed)
@@ -898,7 +929,6 @@ describe("alwaysShow", () => {
   test("alwaysShow applies to main only, child peak still wins", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "child1" ? { type: "busy" } : undefined),
@@ -922,7 +952,6 @@ describe("alwaysShow", () => {
   test("alwaysShow off-peak main + peak child -> [PEAK]", async () => {
     const instance = await init(
       "opencode-go/glm-5.3-flash",
-      [],
       () => undefined,
       "",
       (id) => (id === "child1" ? { type: "busy" } : undefined),

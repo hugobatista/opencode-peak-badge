@@ -42,7 +42,7 @@ const tui: TuiPlugin = async (api, rawOptions) => {
   const tracked = new Map<string, ModelRef>()
   const picked = new Map<string, ModelRef>()
   let activeSessionID: string | undefined
-  const fetching = new Set<string>()
+  const probed = new Set<string>()
   const childParent = new Map<string, string>()
   const children = new Map<string, Map<string, ModelRef>>()
 
@@ -87,57 +87,61 @@ const tui: TuiPlugin = async (api, rawOptions) => {
     }
   }
 
-  api.event.on("session.created", (event) => {
-    trackModel(event.properties.sessionID, event.properties.info?.model)
-    trackChild(event.properties.sessionID, event.properties.info?.parentID, event.properties.info?.model)
-  })
-
-  api.event.on("session.updated", (event) => {
-    trackModel(event.properties.sessionID, event.properties.info?.model)
-    trackChild(
-      event.properties.sessionID,
-      event.properties.info?.parentID ?? childParent.get(event.properties.sessionID),
-      event.properties.info?.model,
-    )
-  })
-
-  api.event.on("session.next.model.switched", (event) => {
-    trackModel(event.properties.sessionID, event.properties.model)
-    trackChild(event.properties.sessionID, childParent.get(event.properties.sessionID), event.properties.model)
-  })
-
-  api.event.on("message.updated", (event) => {
-    const info = event.properties.info
-    if (!info?.sessionID) return
-    const model =
-      info.role === "assistant"
-        ? { providerID: info.providerID, id: info.modelID }
-        : { providerID: info.model?.providerID, id: info.model?.modelID }
-    trackModel(info.sessionID, model)
-    trackChild(info.sessionID, childParent.get(info.sessionID), model)
-  })
-
-  api.event.on("session.status", (event) => {
-    if (childParent.has(event.properties.sessionID)) setVersion((value) => value + 1)
-  })
-
-  api.event.on("session.deleted", (event) => {
-    const sessionID = event.properties.info.id
-    let changed = tracked.delete(sessionID)
-    if (picked.delete(sessionID)) changed = true
-    const childMap = children.get(sessionID)
-    if (childMap) {
-      for (const childID of childMap.keys()) childParent.delete(childID)
-      children.delete(sessionID)
-      changed = true
-    }
-    const parent = childParent.get(sessionID)
-    if (parent) {
-      if (children.get(parent)?.delete(sessionID)) changed = true
-      childParent.delete(sessionID)
-    }
-    if (changed) setVersion((value) => value + 1)
-  })
+  const disposeEvents = [
+    api.event.on("session.created", (event) => {
+      trackModel(event.properties.sessionID, event.properties.info?.model)
+      trackChild(event.properties.sessionID, event.properties.info?.parentID, event.properties.info?.model)
+    }),
+    api.event.on("session.updated", (event) => {
+      trackModel(event.properties.sessionID, event.properties.info?.model)
+      trackChild(
+        event.properties.sessionID,
+        event.properties.info?.parentID ?? childParent.get(event.properties.sessionID),
+        event.properties.info?.model,
+      )
+    }),
+    api.event.on("session.next.model.switched", (event) => {
+      trackModel(event.properties.sessionID, event.properties.model)
+      trackChild(event.properties.sessionID, childParent.get(event.properties.sessionID), event.properties.model)
+    }),
+    api.event.on("message.updated", (event) => {
+      const info = event.properties.info
+      if (!info?.sessionID) return
+      const model =
+        info.role === "assistant"
+          ? { providerID: info.providerID, id: info.modelID }
+          : { providerID: info.model?.providerID, id: info.model?.modelID }
+      trackModel(info.sessionID, model)
+      trackChild(info.sessionID, childParent.get(info.sessionID), model)
+    }),
+    api.event.on("session.status", (event) => {
+      if (childParent.has(event.properties.sessionID)) setVersion((value) => value + 1)
+    }),
+    api.event.on("session.deleted", (event) => {
+      const sessionID = event.properties.info.id
+      let changed = tracked.delete(sessionID)
+      if (probed.delete(sessionID)) changed = true
+      if (picked.delete(sessionID)) changed = true
+      const stack = [sessionID]
+      while (stack.length > 0) {
+        const id = stack.pop()!
+        const childMap = children.get(id)
+        if (!childMap) continue
+        children.delete(id)
+        for (const childID of childMap.keys()) {
+          childParent.delete(childID)
+          stack.push(childID)
+        }
+        changed = true
+      }
+      const parent = childParent.get(sessionID)
+      if (parent) {
+        if (children.get(parent)?.delete(sessionID)) changed = true
+        childParent.delete(sessionID)
+      }
+      if (changed) setVersion((value) => value + 1)
+    }),
+  ]
 
   let debounceTimer: ReturnType<typeof setTimeout> | undefined
   const timer = setInterval(() => {
@@ -145,6 +149,7 @@ const tui: TuiPlugin = async (api, rawOptions) => {
     applyRecentModel()
   }, pollSeconds * 1000)
   api.lifecycle.onDispose(() => {
+    for (const dispose of disposeEvents) dispose()
     clearInterval(timer)
     clearTimeout(debounceTimer)
     homeWatcher?.close()
@@ -153,30 +158,18 @@ const tui: TuiPlugin = async (api, rawOptions) => {
   function mainRef(sessionID: string | undefined): ModelRef | undefined {
     version()
     let ref: ModelRef | undefined = sessionID ? (picked.get(sessionID) ?? tracked.get(sessionID)) : undefined
-    if (!ref && sessionID) {
-      const messages = api.state.session.messages(sessionID)
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const message = messages[i] as { role?: string; modelID?: string; providerID?: string }
-        if (message.role === "assistant" && message.modelID && message.providerID) {
-          ref = { providerID: message.providerID, modelID: message.modelID }
-          tracked.set(sessionID, ref)
-          break
-        }
-      }
-      if (!ref && api.client?.session?.get && !fetching.has(sessionID)) {
-        fetching.add(sessionID)
-        void api.client.session
-          .get({ sessionID })
-          .then((result) => {
-            fetching.delete(sessionID)
-            const model = result.data?.model
-            if (model?.providerID && model.id && !tracked.has(sessionID)) {
-              tracked.set(sessionID, { providerID: model.providerID, modelID: model.id })
-              setVersion((value) => value + 1)
-            }
-          })
-          .catch(() => fetching.delete(sessionID))
-      }
+    if (!ref && sessionID && api.client?.session?.get && !probed.has(sessionID)) {
+      probed.add(sessionID)
+      void api.client.session
+        .get({ sessionID })
+        .then((result) => {
+          const model = result.data?.model
+          if (model?.providerID && model.id && !tracked.has(sessionID)) {
+            tracked.set(sessionID, { providerID: model.providerID, modelID: model.id })
+            setVersion((value) => value + 1)
+          }
+        })
+        .catch(() => probed.delete(sessionID))
     }
     if (!ref) {
       ref = sessionID ? configModelRef() : (configModelRef() ?? homeModelRef())
@@ -193,9 +186,7 @@ const tui: TuiPlugin = async (api, rawOptions) => {
   }
 
   let homeRef: ModelRef | undefined
-  let homeRefChecked = 0
   function homeModelRef(): ModelRef | undefined {
-    if (Date.now() - homeRefChecked > 5000) applyRecentModel()
     return homeRef
   }
 
@@ -212,7 +203,6 @@ const tui: TuiPlugin = async (api, rawOptions) => {
       if (key === lastAppliedKey) return
       lastAppliedKey = key
       homeRef = recent ? { providerID: recent.providerID!, modelID: recent.modelID! } : undefined
-      homeRefChecked = Date.now()
       if (activeSessionID && homeRef) picked.set(activeSessionID, homeRef)
       setVersion((value) => value + 1)
     } catch {
@@ -224,9 +214,10 @@ const tui: TuiPlugin = async (api, rawOptions) => {
   }
 
   // Watch model.json so a model picked on the home screen updates the badge
-  // immediately instead of waiting for the next poll tick. OpenCode writes the
-  // file atomically (rename of a temp file), so we debounce the read to
-  // ensure it happens after the rename completes.
+  // immediately. OpenCode writes the file atomically (temp file plus rename),
+  // and the filesystem reports the temp file name, not "model.json". So watch
+  // the whole directory and debounce the read until the rename has completed.
+  // The poll timer re-reads model.json as a safety net if an event is missed.
   const stateDir = api.state.path.state
   function scheduleModelRefresh(): void {
     clearTimeout(debounceTimer)
@@ -241,6 +232,8 @@ const tui: TuiPlugin = async (api, rawOptions) => {
         }
       })()
     : undefined
+
+  void applyRecentModel()
 
   function activeChildRefs(sessionID: string): ModelRef[] {
     if (!subagents) return []
