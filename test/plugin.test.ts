@@ -333,6 +333,107 @@ describe("model picked in a session", () => {
   })
 })
 
+describe("model change while in a session", () => {
+  test("session.updated invalidates a stale model.json pick", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "peak-badge-"))
+    writeFileSync(
+      join(dir, "model.json"),
+      JSON.stringify({ recent: [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }] }),
+    )
+    const instance = await init("opencode-go/glm-5.3-flash", [], () => undefined, dir)
+    cleanups.push(...instance.disposed)
+    const updated = instance.events.find((e) => e.type === "session.updated")!
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("s1")).toBeUndefined()
+    await instance.applyRecentModel()
+    expect(instance.badge("s1")).toEqual({ label: "[PEAK]", peak: true })
+    updated.handler({
+      id: "u3",
+      type: "session.updated",
+      properties: { sessionID: "s1", info: { model: { id: "glm-5.3-flash", providerID: "opencode-go" } } },
+    })
+    expect(instance.badge("s1")).toBeUndefined()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("message.updated with an assistant model switches the badge", async () => {
+    const instance = await init("opencode-go/glm-5.3-flash")
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    const message = instance.events.find((e) => e.type === "message.updated")!
+    created.handler({
+      id: "c3",
+      type: "session.created",
+      properties: { sessionID: "s12", info: { model: { id: "deepseek-v4-flash", providerID: "opencode-go" } } },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("s12")).toEqual({ label: "[PEAK]", peak: true })
+    message.handler({
+      id: "m3",
+      type: "message.updated",
+      properties: {
+        sessionID: "s12",
+        info: { id: "msg1", sessionID: "s12", role: "assistant", modelID: "glm-5.3-flash", providerID: "opencode-go" },
+      },
+    })
+    expect(instance.badge("s12")).toBeUndefined()
+  })
+
+  test("message.updated with a user model switches the badge", async () => {
+    const instance = await init("opencode-go/glm-5.3-flash")
+    cleanups.push(...instance.disposed)
+    const message = instance.events.find((e) => e.type === "message.updated")!
+    message.handler({
+      id: "m4",
+      type: "message.updated",
+      properties: {
+        sessionID: "s13",
+        info: {
+          id: "msg2",
+          sessionID: "s13",
+          role: "user",
+          model: { providerID: "opencode-go", modelID: "deepseek-v4-pro" },
+        },
+      },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("s13")).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("message.updated for a busy child feeds the parent badge", async () => {
+    const instance = await init(
+      "opencode-go/glm-5.3-flash",
+      [],
+      () => undefined,
+      "",
+      (id) => (id === "child2" ? { type: "busy" } : undefined),
+    )
+    cleanups.push(...instance.disposed)
+    const created = instance.events.find((e) => e.type === "session.created")!
+    const message = instance.events.find((e) => e.type === "message.updated")!
+    created.handler({
+      id: "c4",
+      type: "session.created",
+      properties: { sessionID: "child2", info: { parentID: "main2" } },
+    })
+    setFake("2026-09-07T08:30:00Z")
+    instance.refresh()
+    expect(instance.badge("main2")).toBeUndefined()
+    message.handler({
+      id: "m5",
+      type: "message.updated",
+      properties: {
+        sessionID: "child2",
+        info: { id: "msg3", sessionID: "child2", role: "assistant", modelID: "deepseek-v4-flash", providerID: "opencode-go" },
+      },
+    })
+    expect(instance.badge("main2")).toEqual({ label: "[PEAK]", peak: true })
+  })
+})
+
 describe("model tracking", () => {
   let instance: Instance
   let switched!: { handler: (e: unknown) => void }

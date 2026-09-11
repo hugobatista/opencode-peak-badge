@@ -31,6 +31,10 @@ restart needed when a session crosses a peak window boundary.
   before the first prompt. It also watches OpenCode's `model.json`, so picking
   a model updates the badge immediately — both on the home screen and in a
   session — instead of waiting for the next poll tick or the next prompt.
+- Follows model changes inside a session from `session.next.model.switched`
+  and `message.updated`. Session events always win over the global
+  `model.json` pick, so a model chosen earlier cannot shadow a later change
+  (for example when an agent switch changes the session model).
 - Shows nothing for models without configured peak hours, unless
   `alwaysShow: true` forces the badge for the main model from the top-level
   `windows` / `weekdaysOnly`.
@@ -156,6 +160,27 @@ one participate — a subagent's own subagents count too. While a session is
 
 `alwaysShow` only affects the main model; a subagent never renders a badge from
 the fallback windows. Set `subagents: false` to ignore subagents entirely.
+
+### Agent switches (plan / build) with different models
+
+When agents in a session use different models, the badge follows the change
+from `session.next.model.switched` and `message.updated`. There is one
+limitation: the TUI Tab agent cycle does **not** emit any event or persist the
+chosen model — the cycle and the per-agent model pick are stored only in the
+TUI's local state (`agent.move` + `agent.moveModel`, solid signals). The plugin
+cannot observe them.
+
+Concretely, between pressing Tab and submitting the next prompt the badge
+keeps the last known session model. On prompt submission OpenCode publishes
+`session.next.model.switched` (with the model selected for that agent) and
+`message.updated` (with the resolved assistant/user model), and the badge
+updates in the same tick.
+
+If you need an immediate update, pick the model explicitly from the model
+list — this writes to `model.json` and the badge reacts immediately.
+
+This behavior was verified on OpenCode 1.18.x. If a future version starts
+emitting an event on agent cycle, the badge will react automatically.
 
 ### alwaysShow
 

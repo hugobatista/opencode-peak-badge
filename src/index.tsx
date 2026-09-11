@@ -48,8 +48,15 @@ const tui: TuiPlugin = async (api, rawOptions) => {
 
   function trackModel(sessionID: string, model: { providerID?: string; id?: string } | undefined): void {
     if (!sessionID || !model?.providerID || !model?.id) return
-    tracked.set(sessionID, { providerID: model.providerID, modelID: model.id })
-    setVersion((value) => value + 1)
+    const ref: ModelRef = { providerID: model.providerID, modelID: model.id }
+    const prev = tracked.get(sessionID)
+    // Session events are authoritative over the global model.json pick, which
+    // may be stale (for example after an agent switch changes the session model).
+    const hadPick = picked.delete(sessionID)
+    tracked.set(sessionID, ref)
+    if (hadPick || !prev || prev.providerID !== ref.providerID || prev.modelID !== ref.modelID) {
+      setVersion((value) => value + 1)
+    }
   }
 
   function trackChild(
@@ -97,6 +104,17 @@ const tui: TuiPlugin = async (api, rawOptions) => {
   api.event.on("session.next.model.switched", (event) => {
     trackModel(event.properties.sessionID, event.properties.model)
     trackChild(event.properties.sessionID, childParent.get(event.properties.sessionID), event.properties.model)
+  })
+
+  api.event.on("message.updated", (event) => {
+    const info = event.properties.info
+    if (!info?.sessionID) return
+    const model =
+      info.role === "assistant"
+        ? { providerID: info.providerID, id: info.modelID }
+        : { providerID: info.model?.providerID, id: info.model?.modelID }
+    trackModel(info.sessionID, model)
+    trackChild(info.sessionID, childParent.get(info.sessionID), model)
   })
 
   api.event.on("session.status", (event) => {
