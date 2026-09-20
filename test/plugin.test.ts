@@ -1,8 +1,26 @@
 import { plugin as registerBunPlugin } from "bun"
 import { afterAll, describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import solid from "@opentui/solid/bun-plugin"
 
 registerBunPlugin(solid)
+
+// Isolate the plugin's model.json source from the real TUI state dir. The
+// plugin resolves `<XDG_STATE_HOME>/opencode` on setup, so this must be set
+// before any harness is created.
+const stateRoot = mkdtempSync(join(tmpdir(), "peak-badge-state-"))
+const modelDir = join(stateRoot, "opencode")
+mkdirSync(modelDir, { recursive: true })
+process.env.XDG_STATE_HOME = stateRoot
+
+const modelFile = join(modelDir, "model.json")
+
+function writeModelFile(recent: Array<{ providerID: string; modelID: string }> | undefined): void {
+  if (recent === undefined) rmSync(modelFile, { force: true })
+  else writeFileSync(modelFile, JSON.stringify({ recent }))
+}
 
 const mod = await import("../src/index.tsx")
 
@@ -25,6 +43,7 @@ type Harness = {
   badge: (sessionID?: string) => Badge
   badgeText: (sessionID?: string) => string
   refresh: () => void
+  applyRecentModel: () => Promise<void>
   refreshHomeModel: () => Promise<void>
   setDefaultModel: (model: ModelRef | null) => void
   setSession: (session: SessionSeed) => void
@@ -107,6 +126,7 @@ function createHarness(config: {
     badge: mod.__test.badge as (sessionID?: string) => Badge,
     badgeText: mod.__test.badgeText as (sessionID?: string) => string,
     refresh: mod.__test.refresh as () => void,
+    applyRecentModel: mod.__test.applyRecentModel as () => Promise<void>,
     refreshHomeModel: mod.__test.refreshHomeModel as () => Promise<void>,
     setDefaultModel: (model) => {
       defaultModel = model
@@ -146,8 +166,11 @@ async function init(
   sessions?: SessionSeed[],
   running?: string[],
 ): Promise<Harness> {
+  // Start every test without a picked model so only explicit fixtures apply.
+  writeModelFile(undefined)
   const harness = createHarness({ defaultModel, options, sessions, running })
   cleanups.push(harness.cleanup)
+  await harness.applyRecentModel()
   await harness.refreshHomeModel()
   return harness
 }
@@ -220,6 +243,65 @@ describe("default (home) model", () => {
     harness.emit("model.updated", {})
     await harness.refreshHomeModel()
     expect(harness.badge(undefined)).toEqual({ label: "[PEAK]", peak: true })
+  })
+})
+
+describe("picked model (model.json)", () => {
+  const DS_PICK = { providerID: "opencode-go", modelID: "deepseek-v4-flash" }
+
+  test("home badge follows the picked model, not the server default", async () => {
+    const harness = await init(GLM)
+    setFake("2026-09-07T08:30:00Z")
+    harness.refresh()
+    expect(harness.badge(undefined)).toBeUndefined()
+    writeModelFile([DS_PICK])
+    await harness.applyRecentModel()
+    expect(harness.badge(undefined)).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("clearing model.json restores the server default", async () => {
+    const harness = await init(GLM)
+    setFake("2026-09-07T08:30:00Z")
+    harness.refresh()
+    writeModelFile([DS_PICK])
+    await harness.applyRecentModel()
+    expect(harness.badge(undefined)).toEqual({ label: "[PEAK]", peak: true })
+    writeModelFile(undefined)
+    await harness.applyRecentModel()
+    expect(harness.badge(undefined)).toBeUndefined()
+  })
+
+  test("a pick applies to the active session until it is committed", async () => {
+    const harness = await init(GLM, undefined, [{ id: "s1" }])
+    setFake("2026-09-07T08:30:00Z")
+    harness.refresh()
+    expect(harness.badge("s1")).toBeUndefined()
+    writeModelFile([DS_PICK])
+    await harness.applyRecentModel()
+    expect(harness.badge("s1")).toEqual({ label: "[PEAK]", peak: true })
+    harness.emit("session.model.selected", {
+      sessionID: "s1",
+      model: { providerID: "opencode-go", id: "glm-5.3-flash" },
+    })
+    expect(harness.badge("s1")).toBeUndefined()
+  })
+
+  test("session.created with a model feeds the badge", async () => {
+    const harness = await init(GLM)
+    setFake("2026-09-07T08:30:00Z")
+    harness.refresh()
+    harness.emit("session.created", { sessionID: "s9", model: { providerID: "opencode-go", id: "deepseek-v4-flash" } })
+    expect(harness.badge("s9")).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("session.deleted clears committed models", async () => {
+    const harness = await init(GLM)
+    setFake("2026-09-07T08:30:00Z")
+    harness.refresh()
+    harness.emit("session.created", { sessionID: "s1", model: { providerID: "opencode-go", id: "deepseek-v4-flash" } })
+    expect(harness.badge("s1")).toEqual({ label: "[PEAK]", peak: true })
+    harness.emit("session.deleted", { sessionID: "s1" })
+    expect(harness.badge("s1")).toBeUndefined()
   })
 })
 
@@ -379,4 +461,6 @@ describe("alwaysShow", () => {
 afterAll(() => {
   clearFake()
   for (const fn of cleanups) fn()
+  writeModelFile(undefined)
+  rmSync(stateRoot, { recursive: true, force: true })
 })

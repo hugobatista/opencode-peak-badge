@@ -34,12 +34,15 @@ session crosses a peak window boundary.
   a subagent session is `running`, its model is checked against the peak
   windows. Peak wins: if any running subagent is in peak hours, the badge shows
   `[PEAK]`. Disable with `subagents: false`.
-- Resolves the active model from `data.session.get(id)?.model`, so the badge
-  shows before the first prompt. Sessions without a model, and the home screen,
-  fall back to the default model from `client.model.default()`.
-- Follows model changes inside a session live: the session model is read from
-  the TUI's reactive store, which is updated from `session.model.selected` and
-  `session.agent.selected`.
+- Resolves the active model from the session's committed model
+  (`data.session.get(id)?.model` plus `session.created` /
+  `session.model.selected` events) and, while the picker selection has not been
+  committed yet, from the TUI's last picked model in
+  `<XDG_STATE_HOME>/opencode/model.json`. The home screen uses the picked model
+  too, falling back to `client.model.default()` when there is no pick.
+- Follows model changes live: picking a model updates the badge immediately
+  (both on the home screen and inside a running session), and a committed
+  session model always wins over a stale pick.
 - Shows nothing for models without configured peak hours, unless
   `alwaysShow: true` forces the badge for the main model from the top-level
   `windows` / `weekdaysOnly`.
@@ -212,6 +215,30 @@ that is `running`, checks the child's model against the peak windows:
 
 `alwaysShow` only affects the main model; a subagent never renders a badge from
 the fallback windows. Set `subagents: false` to ignore subagents entirely.
+
+### Model picker and the home screen
+
+OpenCode keeps the picker selection in TUI-local state and only commits it to
+the session server-side when you submit a prompt. To avoid a stale badge, the
+plugin also reads the TUI's `model.json` (at
+`$XDG_STATE_HOME/opencode/model.json`, by default
+`~/.local/state/opencode/model.json`), which the picker updates immediately.
+The badge therefore:
+
+- on the home screen (where `session.new` lands), shows the last picked model
+  instead of the server's `model.default()`;
+- inside a running session, shows the newly picked model right away, then the
+  committed session model once the prompt is submitted.
+
+Precedence: a committed session model (`session.created` /
+`session.model.selected`) wins over the `model.json` pick; a pick is applied
+only to the session currently on screen and is dropped when you switch
+sessions. If `model.json` is missing, the plugin falls back to
+`client.model.default()` as before.
+
+This is a bridge over an internal TUI file — OpenCode V2 does not expose the
+in-progress picker selection to plugins. If a future release publishes an event
+or API for it, this can be simplified.
 
 ### Agent switches (plan / build) with different models
 

@@ -1,6 +1,10 @@
 /** @jsxImportSource @opentui/solid */
 import { Plugin } from "@opencode/plugin/tui"
 import type { Context } from "@opencode/plugin/tui/context"
+import { watch } from "node:fs"
+import { readFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { createMemo, createSignal } from "solid-js"
 import {
   badgeFor,
@@ -26,6 +30,16 @@ function currentNow(): Date {
   return new Date()
 }
 
+// OpenCode stores its TUI state under `<XDG_STATE_HOME>/opencode` (default
+// `~/.local/state/opencode`). The model picker writes the last chosen model to
+// `model.json` there immediately, while the session only commits the model to
+// the server on prompt. Reading it lets the badge follow the picker without
+// waiting for a prompt.
+function stateDir(): string {
+  const base = process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state")
+  return join(base, "opencode")
+}
+
 export default Plugin.define({
   id: "peak-badge",
   setup(ctx: Context) {
@@ -41,18 +55,80 @@ export default Plugin.define({
     const debug = options.debug ?? false
 
     const [tick, setTick] = createSignal(currentNow().getTime())
-    const [homeModel, setHomeModel] = createSignal<ModelRef | undefined>(undefined)
+    const [version, setVersion] = createSignal(0)
+    // `homePick` mirrors the TUI's last picked model (model.json `recent[0]`);
+    // `defaultModel` is the server's fallback from `client.model.default()`.
+    const [homePick, setHomePick] = createSignal<ModelRef | undefined>(undefined)
+    const [defaultModel, setDefaultModel] = createSignal<ModelRef | undefined>(undefined)
+
+    // Models committed to the server for a session (from session events or the
+    // reactive store). They always win over the transient model.json pick.
+    const committed = new Map<string, ModelRef>()
+    // Transient picks from model.json, applied only to the active session.
+    const picked = new Map<string, ModelRef>()
     const synced = new Set<string>()
+    let activeSessionID: string | undefined
+    let lastAppliedKey: string | undefined
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined
 
-    const timer = setInterval(() => setTick(currentNow().getTime()), pollSeconds * 1000)
+    const timer = setInterval(() => {
+      setTick(currentNow().getTime())
+      // Safety net in case a filesystem event is missed.
+      void applyRecentModel()
+    }, pollSeconds * 1000)
 
-    // The default model is an async, non-reactive client call, so it is cached in
-    // a signal and re-fetched on `model.updated`.
+    async function applyRecentModel(): Promise<void> {
+      const dir = stateDir()
+      try {
+        const raw = await readFile(join(dir, "model.json"), "utf8")
+        const parsed = JSON.parse(raw) as { recent?: Array<{ providerID?: string; modelID?: string }> }
+        const recent = parsed.recent?.find((model) => model?.providerID && model?.modelID)
+        const key = recent ? `${recent.providerID}/${recent.modelID}` : undefined
+        if (key === lastAppliedKey) return
+        lastAppliedKey = key
+        const ref = recent ? { providerID: recent.providerID!, id: recent.modelID! } : undefined
+        setHomePick(ref)
+        if (activeSessionID) {
+          if (ref) picked.set(activeSessionID, ref)
+          else picked.delete(activeSessionID)
+        }
+        setVersion((value) => value + 1)
+      } catch {
+        // No model.json yet (or unreadable): keep the default-model fallback.
+        // Reset a previously applied pick so a recreated file is re-read.
+        if (lastAppliedKey !== undefined) {
+          lastAppliedKey = undefined
+          setHomePick(undefined)
+          if (activeSessionID) picked.delete(activeSessionID)
+          setVersion((value) => value + 1)
+        }
+      }
+    }
+
+    function scheduleModelRefresh(): void {
+      clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => void applyRecentModel(), 100)
+    }
+
+    // The TUI writes model.json atomically (temp file plus rename) and the
+    // filesystem reports the temp name, so watch the directory and debounce.
+    const homeWatcher = (() => {
+      try {
+        return watch(stateDir(), () => scheduleModelRefresh())
+      } catch {
+        return undefined
+      }
+    })()
+
+    void applyRecentModel()
+
+    // The server default is an async, non-reactive client call, so it is cached
+    // in a signal and re-fetched on `model.updated`.
     async function refreshHomeModel(): Promise<void> {
       try {
         const result = await ctx.client.model.default()
         const info = result.data
-        setHomeModel(
+        setDefaultModel(
           info?.providerID && info.id ? { providerID: info.providerID, id: info.id } : undefined,
         )
       } catch {
@@ -61,6 +137,21 @@ export default Plugin.define({
     }
     void refreshHomeModel()
 
+    function trackModel(
+      sessionID: string | undefined,
+      model: { providerID?: string; id?: string } | undefined,
+    ): void {
+      if (!sessionID || !model?.providerID || !model.id) return
+      const ref: ModelRef = { providerID: model.providerID, id: model.id }
+      // A committed session model is authoritative over a stale model.json pick.
+      const hadPick = picked.delete(sessionID)
+      const prev = committed.get(sessionID)
+      committed.set(sessionID, ref)
+      if (hadPick || !prev || prev.providerID !== ref.providerID || prev.id !== ref.id) {
+        setVersion((value) => value + 1)
+      }
+    }
+
     function ensureSynced(sessionID: string): void {
       if (synced.has(sessionID)) return
       synced.add(sessionID)
@@ -68,18 +159,26 @@ export default Plugin.define({
     }
 
     function sessionModel(sessionID: string): ModelRef | undefined {
+      const tracked = committed.get(sessionID)
+      if (tracked) return tracked
       const model = ctx.data.session.get(sessionID)?.model
       if (model?.providerID && model.id) return { providerID: model.providerID, id: model.id }
       ensureSynced(sessionID)
       return undefined
     }
 
+    function homeRef(): ModelRef | undefined {
+      return homePick() ?? defaultModel()
+    }
+
     function mainRef(sessionID: string | undefined): ModelRef | undefined {
       if (sessionID) {
+        const pick = picked.get(sessionID)
+        if (pick) return pick
         const model = sessionModel(sessionID)
         if (model) return model
       }
-      return homeModel()
+      return homeRef()
     }
 
     function activeChildRefs(sessionID: string): ModelRef[] {
@@ -105,6 +204,14 @@ export default Plugin.define({
     }
 
     function badgeView(sessionID: string | undefined): BadgeView {
+      // Reading `version` keeps event-driven model changes tracked by the memo.
+      version()
+      if (sessionID !== activeSessionID) {
+        // Entering a session drops any pick left over from another one; the
+        // session's committed model (once known) is used instead.
+        if (sessionID) picked.delete(sessionID)
+        activeSessionID = sessionID
+      }
       const now = new Date(tick())
       const states: BadgeState[] = []
       const main = mainRef(sessionID)
@@ -141,9 +248,23 @@ export default Plugin.define({
       )
     }
 
-    const disposeModelUpdated = ctx.data.on("model.updated", () => {
-      void refreshHomeModel()
-    })
+    const disposeEvents = [
+      ctx.data.on("model.updated", () => {
+        void refreshHomeModel()
+      }),
+      ctx.data.on("session.created", (event) => {
+        trackModel(event.data.sessionID, event.data.model)
+      }),
+      ctx.data.on("session.model.selected", (event) => {
+        trackModel(event.data.sessionID, event.data.model)
+      }),
+      ctx.data.on("session.deleted", (event) => {
+        const changed = committed.delete(event.data.sessionID)
+        const hadPick = picked.delete(event.data.sessionID)
+        synced.delete(event.data.sessionID)
+        if (changed || hadPick) setVersion((value) => value + 1)
+      }),
+    ]
 
     const disposeSessionSlot = ctx.ui.slot({
       append: "prompt.footer.status",
@@ -157,13 +278,16 @@ export default Plugin.define({
     __test.badge = badge
     __test.badgeText = (sessionID?: string) => badgeText(badgeView(sessionID))
     __test.refresh = () => setTick(currentNow().getTime())
+    __test.applyRecentModel = applyRecentModel
     __test.refreshHomeModel = refreshHomeModel
 
     return () => {
-      disposeModelUpdated()
+      for (const dispose of disposeEvents) dispose()
       disposeSessionSlot()
       disposeHomeSlot()
       clearInterval(timer)
+      clearTimeout(debounceTimer)
+      homeWatcher?.close()
     }
   },
 })
@@ -173,5 +297,6 @@ export const __test: {
   badge: ((sessionID?: string) => BadgeState | undefined) | undefined
   badgeText: ((sessionID?: string) => string) | undefined
   refresh: (() => void) | undefined
+  applyRecentModel: (() => Promise<void>) | undefined
   refreshHomeModel: (() => Promise<void>) | undefined
-} = { badge: undefined, badgeText: undefined, refresh: undefined, refreshHomeModel: undefined }
+} = { badge: undefined, badgeText: undefined, refresh: undefined, applyRecentModel: undefined, refreshHomeModel: undefined }
