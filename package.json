@@ -1,6 +1,6 @@
 {
   "name": "opencode-peak-badge",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "OpenCode TUI plugin: live [PEAK]/[OFF-PEAK] badge for any model with configured peak hours. Provider-agnostic; ships with DeepSeek defaults.",
   "type": "module",
   "license": "MIT",
@@ -24,7 +24,7 @@
     "peak-hours"
   ],
   "engines": {
-    "opencode": ">=1.14.0"
+    "opencode": ">=2.0.0"
   },
   "publishConfig": {
     "access": "public"
@@ -48,18 +48,20 @@
     "prepublishOnly": "bun run typecheck && bun test && bun run build"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": ">=1.14.0",
-    "@opentui/core": ">=0.2.2",
-    "@opentui/solid": ">=0.2.2",
-    "solid-js": "^1.9.0"
+    "@opencode/plugin": ">=2.0.10",
+    "@opencode/theme": ">=2.0.10",
+    "@opentui/core": ">=0.5.10",
+    "@opentui/solid": ">=0.5.10",
+    "solid-js": ">=1.9.0"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "1.14.39",
-    "@opentui/core": "0.2.2",
-    "@opentui/solid": "0.2.2",
+    "@opencode/plugin": "2.0.10",
+    "@opencode/theme": "2.0.10",
+    "@opentui/core": "0.5.10",
+    "@opentui/solid": "0.5.10",
     "@types/bun": "^1.4.1",
     "@types/node": "^24.0.0",
-    "solid-js": "^1.9.0",
+    "solid-js": "1.9.12",
     "typescript": "^5.8.0"
   }
 }

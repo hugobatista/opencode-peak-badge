@@ -5,36 +5,41 @@
 [![Test](https://img.shields.io/github/actions/workflow/status/hugobatista/opencode-peak-badge/test.yml?label=Test)](https://github.com/hugobatista/opencode-peak-badge/actions/workflows/test.yml)
 [![npm](https://img.shields.io/npm/v/opencode-peak-badge.svg)](https://www.npmjs.com/package/opencode-peak-badge)
 
-OpenCode TUI plugin. Shows a `[PEAK]` / `[OFF-PEAK]` badge next to the model
-name in the prompt bar, so you always know whether the active model is billed
-at peak rates. When a subagent session is running, its model is tracked too:
-peak wins across the main model and all busy subagents. Updates live — no
-restart needed when a session crosses a peak window boundary.
+OpenCode TUI plugin. Shows a `[PEAK]` / `[OFF-PEAK]` badge in the footer status
+line, so you always know whether the active model is billed at peak rates. When
+a subagent session is running, its model is tracked too: peak wins across the
+main model and all running subagents. Updates live — no restart needed when a
+session crosses a peak window boundary.
 
 ![Demo](docs/demo-peak.png)
 
+> **Using OpenCode V1 (CLI v1)?** OpenCode V2 changed the plugin API, so this
+> plugin was rewritten. `0.3.0` is the last release compatible with V1. Since
+> `0.4.0` the npm `latest` tag points at the V2 build, so **pin the version**:
+> use `opencode-peak-badge@opencode-v1` (or `@0.3.0`). See
+> [OpenCode V1 (legacy)](#opencode-v1-legacy).
+
 ## What it does
 
-- Renders a badge in `session_prompt_right` and `home_prompt_right` (both
-  slots) whenever a model with configured peak hours is active — or always,
-  with `alwaysShow: true`.
+- Renders a badge in the footer status line via `prompt.footer.status` (session)
+  and `home.footer.status` (home) whenever a model with configured peak hours is
+  active — or always, with `alwaysShow: true`.
 - `[PEAK]` renders in the theme's warning color. `[OFF-PEAK]` renders in the
   muted color. The badge shows in **both** states for tracked models.
-- Recomputes every `pollSeconds` (default 10) and watches `model.json` for
-  immediate model updates.
-- Tracks all descendant subagent sessions through their `parentID` chain.
-  While a subagent session is busy, its model is checked against the peak
-  windows. Peak wins: if any busy subagent is in peak hours, the badge shows
+- Recomputes every `pollSeconds` (default 10) and reacts live to
+  `session.model.selected`, `session.agent.selected`, `session.status` and
+  `model.updated` through the TUI's cached session data — no restart when a
+  session crosses a peak boundary.
+- Tracks all descendant subagent sessions through `data.session.family()`. While
+  a subagent session is `running`, its model is checked against the peak
+  windows. Peak wins: if any running subagent is in peak hours, the badge shows
   `[PEAK]`. Disable with `subagents: false`.
-- Resolves the active model at session start from `session.created` /
-  `session.updated` events, with a `session.get` fallback, so the badge shows
-  before the first prompt. It also watches OpenCode's `model.json`, so picking
-  a model updates the badge immediately — both on the home screen and in a
-  session — instead of waiting for the next poll tick or the next prompt.
-- Follows model changes inside a session from `session.next.model.switched`
-  and `message.updated`. Session events always win over the global
-  `model.json` pick, so a model chosen earlier cannot shadow a later change
-  (for example when an agent switch changes the session model).
+- Resolves the active model from `data.session.get(id)?.model`, so the badge
+  shows before the first prompt. Sessions without a model, and the home screen,
+  fall back to the default model from `client.model.default()`.
+- Follows model changes inside a session live: the session model is read from
+  the TUI's reactive store, which is updated from `session.model.selected` and
+  `session.agent.selected`.
 - Shows nothing for models without configured peak hours, unless
   `alwaysShow: true` forces the badge for the main model from the top-level
   `windows` / `weekdaysOnly`.
@@ -44,30 +49,77 @@ restart needed when a session crosses a peak window boundary.
 
 ## Requirements
 
-- OpenCode TUI >= 1.14 (TUI plugin support).
+- **OpenCode V2.** The V2 release changed the plugin API; V1 plugin
+  implementations do not run in V2. If you are on the V1 CLI, use `0.3.0` — see
+  [OpenCode V1 (legacy)](#opencode-v1-legacy).
 - [Bun](https://bun.sh) to install dependencies (dev only).
 
 ## Install
 
 ```sh
-opencode plugin opencode-peak-badge --global
+opencode plugin add opencode-peak-badge
 ```
 
-Or add the package name to `~/.config/opencode/tui.json`:
+Or add the package to `opencode.jsonc` (project or
+`~/.config/opencode/opencode.jsonc`):
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["opencode-peak-badge"]
+}
+```
+
+To pass [options](#configuration), use the object form:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    { "package": "opencode-peak-badge", "options": { "pollSeconds": 30 } }
+  ]
+}
+```
+
+CLI-only installs can use `~/.config/opencode/cli.json` instead:
+
+```jsonc
+{
+  "plugins": ["opencode-peak-badge"]
+}
+```
+
+Restart OpenCode if a watched config file changed. Published package plugins load
+at startup.
+
+Verify. Start a session with a tracked model (for example
+`opencode-go/deepseek-v4-flash`) and confirm the badge appears in the footer
+status line. To force a known state, see [Evaluation](#evaluation).
+
+### OpenCode V1 (legacy)
+
+`0.3.0` is the last release compatible with the OpenCode V1 CLI. It uses the old
+`@opencode-ai/plugin/tui` API and the `tui.json` config. Pin the version
+explicitly:
+
+```sh
+opencode plugin opencode-peak-badge@opencode-v1 --global
+# or, exact pin (guaranteed):
+opencode plugin opencode-peak-badge@0.3.0 --global
+```
+
+Or, CLI-version-proof, in `~/.config/opencode/tui.json`:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/tui.json",
-  "plugin": ["opencode-peak-badge"]
+  "plugin": ["opencode-peak-badge@opencode-v1"]
 }
 ```
 
-Restart OpenCode. Config is loaded at startup; there is no hot reload.
-
-Verify. Start a session with a tracked model (for example
-`opencode-go/deepseek-v4-flash`) and confirm the badge appears next to the
-model name in the prompt bar. To force a known state, see
-[Evaluation](#evaluation).
+Do **not** use `opencode-peak-badge` without a version on V1: from `0.4.0` the
+`latest` tag points at the V2 build. The `opencode-v1` dist-tag always resolves
+to `0.3.0`.
 
 ### Install from source (local dev)
 
@@ -79,34 +131,34 @@ model name in the prompt bar. To force a known state, see
    bun install
    ```
 
-2. Register the plugin in `~/.config/opencode/tui.json` with an absolute
-   path to `src/index.tsx`:
+2. Register the plugin in your `opencode.jsonc` with an absolute path to
+   `src/index.tsx`:
 
    ```jsonc
    {
-     "$schema": "https://opencode.ai/tui.json",
-     "plugin": [
+     "$schema": "https://opencode.ai/config.json",
+     "plugins": [
        "/home/your-user/code/projects/opencode-peak-badge/src/index.tsx"
      ]
    }
    ```
 
    The defaults below apply when no options are given. To override, use the
-   tuple form (see [Configuration](#configuration)).
+   object form (see [Configuration](#configuration)).
 
-3. Restart OpenCode. Config is loaded at startup; there is no hot reload.
+3. Restart OpenCode.
 
 ## Configuration
 
-Add options as the second element of a tuple entry:
+Add options with the object form:
 
 ```jsonc
 {
-  "$schema": "https://opencode.ai/tui.json",
-  "plugin": [
-    [
-      "/home/your-user/code/projects/opencode-peak-badge/src/index.tsx",
-      {
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    {
+      "package": "opencode-peak-badge",
+      "options": {
         "models": [
           "re:^opencode-go/deepseek",
           "re:^opencode/deepseek",
@@ -118,9 +170,10 @@ Add options as the second element of a tuple entry:
         "subagents": true,
         "alwaysShow": false,
         "labelPeak": "[PEAK]",
-        "labelOffPeak": "[OFF-PEAK]"
+        "labelOffPeak": "[OFF-PEAK]",
+        "debug": false
       }
-    ]
+    }
   ]
 }
 ```
@@ -132,11 +185,12 @@ Add options as the second element of a tuple entry:
 | `models` | built-in patterns for any DeepSeek model (OpenCode Go, OpenCode Zen, DeepSeek direct) | Models with peak hours. Override to track any `provider/model`. Each entry is a `"provider/model"` exact string, a `"re:<pattern>"` regex string, or an object with per-model `windows`/`weekdaysOnly` overrides. Matching is against the full `provider/model` key (case-insensitive). Exact `id` entries win over regex patterns; otherwise the first matching entry in list order wins. |
 | `windows` | `[["01:00","04:00"],["06:00","10:00"]]` | Peak windows in UTC. Each is `["HH:MM","HH:MM"]`, half-open `[start, end)`. A window whose end is ≤ its start wraps past midnight. |
 | `weekdaysOnly` | `true` | When true, weekends are always off-peak. |
-| `pollSeconds` | `10` | How often the badge recomputes (minimum 1). Also acts as a safety net to re-read `model.json` for picked model updates. |
-| `subagents` | `true` | Track subagent sessions while they are busy. Peak wins over the main model's state. |
+| `pollSeconds` | `10` | How often the badge recomputes (minimum 1). The badge also reacts live to session and model events. |
+| `subagents` | `true` | Track subagent sessions while they are running. Peak wins over the main model's state. |
 | `alwaysShow` | `false` | When true, always show a badge for the main model, using the top-level `windows`/`weekdaysOnly` when no model rule matches. |
 | `labelPeak` | `"[PEAK]"` | Text shown during peak hours. |
 | `labelOffPeak` | `"[OFF-PEAK]"` | Text shown during off-peak hours. |
+| `debug` | `false` | When true, append the detected `provider/model` key to the badge. |
 
 `models` entries are additive to the defaults? No. Supplying `models`
 **replaces** the default list. Provide the full list you want tracked.
@@ -144,51 +198,44 @@ Add options as the second element of a tuple entry:
 ### Subagents
 
 When an OpenCode task spawns a subagent session, that child session carries a
-`parentID` pointing at the session that spawned it. The plugin registers child
-sessions from `session.created` / `session.updated` and tracks the child's
-model. Tracing the `parentID` chain, all **descendant** sessions of the current
-one participate — a subagent's own subagents count too. While a session is
-`busy`, its model enters the badge computation:
+`parentID` pointing at the session that spawned it. The plugin reads the
+descendant tree from `data.session.family(sessionID)` and, for each descendant
+that is `running`, checks the child's model against the peak windows:
 
-- If any busy subagent has a matching rule and is in peak hours, the badge
+- If any running subagent has a matching rule and is in peak hours, the badge
   shows `[PEAK]`, whatever the main model says (`peak` wins).
 - Otherwise the badge follows the main model's state.
 - Idle or deleted subagent sessions are ignored.
 - Subagent sessions whose model has no configured peak hours add nothing.
-- `session.status` events refresh the badge immediately when a subagent goes
-  busy or idle; no need to wait for the next poll tick.
+- The badge reacts live to `session.status` changes when a subagent goes running
+  or idle; no need to wait for the next poll tick.
 
 `alwaysShow` only affects the main model; a subagent never renders a badge from
 the fallback windows. Set `subagents: false` to ignore subagents entirely.
 
 ### Agent switches (plan / build) with different models
 
-When agents in a session use different models, the badge follows the change
-from `session.next.model.switched` and `message.updated`. There is one
-limitation: the TUI Tab agent cycle does **not** emit any event or persist the
-chosen model — the cycle and the per-agent model pick are stored only in the
-TUI's local state (`agent.move` + `agent.moveModel`, solid signals). The plugin
-cannot observe them.
+When agents in a session use different models, the badge follows the session's
+model from the TUI store, updated by `session.agent.selected` and
+`session.model.selected`. One limitation remains: the TUI Tab agent cycle may not
+publish an event or persist the chosen model until the next prompt, because the
+cycle and per-agent model pick are stored in the TUI's local state. Between
+pressing Tab and submitting the next prompt, the badge keeps the last known
+session model. On prompt submission OpenCode publishes the selected
+agent/model, and the badge updates in the same tick.
 
-Concretely, between pressing Tab and submitting the next prompt the badge
-keeps the last known session model. On prompt submission OpenCode publishes
-`session.next.model.switched` (with the model selected for that agent) and
-`message.updated` (with the resolved assistant/user model), and the badge
-updates in the same tick.
+If you need an immediate update, pick the model explicitly from the model list.
 
-If you need an immediate update, pick the model explicitly from the model
-list — this writes to `model.json` and the badge reacts immediately.
-
-This behavior was verified on OpenCode 1.18.x. If a future version starts
-emitting an event on agent cycle, the badge will react automatically.
+This behavior should be re-verified on your OpenCode V2 build; if the agent
+cycle starts emitting an event, the badge reacts automatically.
 
 ### alwaysShow
 
 By default the plugin shows nothing for models without a matching rule. Set
-`alwaysShow: true` to always render a badge in the prompt bar: unmatched main
-models use the top-level `windows` / `weekdaysOnly` (defaults or your
-overrides). Combined with `subagents`, a busy subagent in peak hours still wins
-over an off-peak main model.
+`alwaysShow: true` to always render a badge in the footer: unmatched main models
+use the top-level `windows` / `weekdaysOnly` (defaults or your overrides).
+Combined with `subagents`, a running subagent in peak hours still wins over an
+off-peak main model.
 
 ## Background: peak pricing is property of channel + model
 
@@ -282,7 +329,11 @@ Unset the variable to use real time.
 
 ## Uninstall
 
-Remove the plugin entry from `plugin` in `~/.config/opencode/tui.json` and
+```sh
+opencode plugin remove opencode-peak-badge
+```
+
+Or remove the entry from `plugins` in your `opencode.jsonc` / `cli.json` and
 restart OpenCode.
 
 ## Development
@@ -290,17 +341,18 @@ restart OpenCode.
 ```sh
 bun install
 bun run typecheck   # tsc --noEmit, strict
-bun test            # unit (core logic) + functional (mocked TUI api)
+bun test            # unit (core logic) + functional (mocked TUI context)
 bun run build       # dist/tui.js + dist/tui.d.ts (npm entrypoint)
 ```
 
 - `src/core.ts` — pure logic: window parsing, UTC peak check, per-model config
   resolution. No TUI imports. Fully unit-tested.
-- `src/index.tsx` — the TUI plugin (`id: "peak-badge"`). The plugin loader
+- `src/index.tsx` — the TUI plugin (`id: "peak-badge"`), a
+  `Plugin.define({ id, setup })` from `@opencode/plugin/tui`. The plugin loader
   reads the default export only; the `__test` named export is a test hook.
 - `scripts/build.ts` — bundles `src/index.tsx` to `dist/tui.js` with
-  `@opencode-ai/plugin`, `@opentui/*` and `solid-js` external. The npm
-  `exports["./tui"]` entry points at `dist`, never at `src` (the Solid
+  `@opencode/plugin`, `@opencode/theme`, `@opentui/*` and `solid-js` external.
+  The npm `exports["./tui"]` entry points at `dist`, never at `src` (the Solid
   transform does not run inside `node_modules`).
 
 ## Pre-release checklist

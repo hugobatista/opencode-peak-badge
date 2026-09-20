@@ -13,5 +13,5 @@
     "allowImportingTsExtensions": true,
     "types": ["node", "bun"]
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "tui.tsx"]
 }

@@ -13,7 +13,15 @@ const js = await Bun.build({
   // Compiles JSX away via babel-preset-solid. Without this, bun emits a
   // jsx-dev-runtime import that has no runtime behind it inside node_modules.
   plugins: [solidPlugin],
-  external: ["@opencode-ai/plugin", "@opentui/core", "@opentui/solid", "solid-js"],
+  external: [
+    "@opencode/plugin",
+    "@opencode/plugin/tui",
+    "@opencode/plugin/tui/context",
+    "@opencode/theme",
+    "@opentui/core",
+    "@opentui/solid",
+    "solid-js",
+  ],
 });
 
 for (const log of js.logs) {
