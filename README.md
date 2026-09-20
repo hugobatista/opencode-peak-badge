@@ -1,8 +1,8 @@
 # opencode-peak-badge
 
-[![GitHub Tag](https://img.shields.io/github/v/tag/hugobatista/opencode-peak-badge?logo=github&label=latest)](https://github.com/hugobatista/opencode-peak-badge/releases)
-[![Lint](https://img.shields.io/github/actions/workflow/status/hugobatista/opencode-peak-badge/lint.yml?label=Lint)](https://github.com/hugobatista/opencode-peak-badge/actions/workflows/lint.yml)
-[![Test](https://img.shields.io/github/actions/workflow/status/hugobatista/opencode-peak-badge/test.yml?label=Test)](https://github.com/hugobatista/opencode-peak-badge/actions/workflows/test.yml)
+[![GitHub Tag](https://img.shields.io/github/v/tag/hugobatista/opencode-peak-badge?logo=github&label=latest)](https://go.hugobatist.com/gh-peak-badge/releases)
+[![Lint](https://img.shields.io/github/actions/workflow/status/hugobatista/opencode-peak-badge/lint.yml?label=Lint)](https://go.hugobatist.com/gh-peak-badge/actions/workflows/lint.yml)
+[![Test](https://img.shields.io/github/actions/workflow/status/hugobatista/opencode-peak-badge/test.yml?label=Test)](https://go.hugobatist.com/gh-peak-badge/actions/workflows/test.yml)
 [![npm](https://img.shields.io/npm/v/opencode-peak-badge.svg)](https://www.npmjs.com/package/opencode-peak-badge)
 
 OpenCode TUI plugin. Shows a `[PEAK]` / `[OFF-PEAK]` badge in the footer status
@@ -129,7 +129,7 @@ to `0.3.0`.
 1. Clone the repository and install dependencies:
 
    ```sh
-   git clone https://github.com/hugobatista/opencode-peak-badge.git ~/code/projects/opencode-peak-badge
+   git clone https://go.hugobatist.com/gh-peak-badge.git ~/code/projects/opencode-peak-badge
    cd ~/code/projects/opencode-peak-badge
    bun install
    ```

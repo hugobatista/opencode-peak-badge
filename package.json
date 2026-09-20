@@ -10,11 +10,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hugobatista/opencode-peak-badge.git"
+    "url": "git+https://go.hugobatist.com/gh-peak-badge.git"
   },
-  "homepage": "https://github.com/hugobatista/opencode-peak-badge#readme",
+  "homepage": "https://go.hugobatist.com/gh-peak-badge#readme",
   "bugs": {
-    "url": "https://github.com/hugobatista/opencode-peak-badge/issues"
+    "url": "https://go.hugobatist.com/gh-peak-badge/issues"
   },
   "keywords": [
     "opencode",
