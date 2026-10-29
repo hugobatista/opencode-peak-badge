@@ -58,7 +58,7 @@
     "@opencode/plugin": "2.0.10",
     "@opencode/theme": "2.0.10",
     "@opentui/core": "0.5.10",
-    "@opentui/solid": "0.5.10",
+    "@opentui/solid": "0.5.17",
     "@types/bun": "^1.4.1",
     "@types/node": "^24.0.0",
     "solid-js": "1.9.12",
