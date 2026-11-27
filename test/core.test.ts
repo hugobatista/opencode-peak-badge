@@ -222,6 +222,30 @@ describe("currentNow", () => {
   })
 })
 
+describe("empty configuration arrays", () => {
+  test("models: [] tracks nothing", () => {
+    const rules = resolveRules({ models: [] })
+    expect(rules.exact.size).toBe(0)
+    expect(rules.patterns).toEqual([])
+  })
+
+  test("models: [] overrides the default DeepSeek patterns", () => {
+    const rules = resolveRules({ models: [] })
+    expect(matchRule(rules, modelKey("opencode-go", "deepseek-v4-flash"))).toBeUndefined()
+  })
+
+  test("windows: [] disables peak windows", () => {
+    const rules = resolveRules({ windows: [] })
+    const rule = matchRule(rules, modelKey("opencode-go", "deepseek-v4-flash"))
+    expect(rules.fallback.windows).toEqual([])
+    expect(rule?.windows).toEqual([])
+    expect(badgeFor(d("2026-09-07T08:30:00Z"), rule, { peak: "[PEAK]", offPeak: "[OFF-PEAK]" })).toEqual({
+      label: "[OFF-PEAK]",
+      peak: false,
+    })
+  })
+})
+
 describe("badgeForModels", () => {
   const labels = { peak: "[PEAK]", offPeak: "[OFF-PEAK]" }
   const flash: ModelRef = { providerID: "opencode-go", id: "deepseek-v4-flash" }

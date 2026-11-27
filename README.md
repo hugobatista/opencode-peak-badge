@@ -23,9 +23,8 @@ peak wins. Updates live, including when a session crosses a boundary.
 
 ## Requirements
 
-- **OpenCode V2.**
-- **OpenCode Desktop 2.4 or newer** for the desktop UI. The GUI plugin API is
-  experimental; this release targets 2.4.2.
+- **OpenCode 2.4.2 or newer.** The TUI and Desktop use the V2 plugin API; the
+  desktop GUI requires 2.4.2+ and targets 2.4.2. The GUI plugin API is experimental.
 - **Bun** for development.
 
 ## Install
@@ -131,8 +130,8 @@ Or in `~/.config/opencode/tui.json`:
 
 | Option | Default | Description |
 |---|---|---|
-| `models` | DeepSeek patterns | Rules to track. Replaces the defaults. Strings are exact `provider/model` or `re:<regex>`; objects add per-model `windows`/`weekdaysOnly`. |
-| `windows` | `[["01:00","04:00"],["06:00","10:00"]]` | Peak windows in UTC. Each is `["HH:MM","HH:MM"]`, half-open; end ≤ start wraps midnight. |
+| `models` | DeepSeek patterns | Rules to track. Replaces the defaults. Strings are exact `provider/model` or `re:<regex>`; objects add per-model `windows`/`weekdaysOnly`. An empty array tracks nothing. |
+| `windows` | `[["01:00","04:00"],["06:00","10:00"]]` | Peak windows in UTC. Each is `["HH:MM","HH:MM"]`, half-open; end ≤ start wraps midnight. An empty array means no peak windows. |
 | `weekdaysOnly` | `true` | Weekends are always off-peak. |
 | `pollSeconds` | `10` | Recompute interval (minimum 1). Live events also trigger updates. |
 | `fakeTime` | unset | Fixed ISO timestamp for testing. Overrides `OPENCODE_PEAK_HOURS_FAKE_TIME` in the TUI and works in Desktop. |
@@ -142,7 +141,8 @@ Or in `~/.config/opencode/tui.json`:
 | `labelOffPeak` | `"[OFF-PEAK]"` | Off-peak label. |
 | `debug` | `false` | Append the detected `provider/model` to the badge. |
 
-`models` **replaces** the default list; provide every model you want tracked.
+`models` **replaces** the default list; provide every model you want tracked. An
+empty array tracks nothing.
 
 ### Model matching
 

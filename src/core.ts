@@ -116,9 +116,9 @@ function buildRule(
 }
 
 export function resolveRules(options: PeakHoursOptions = {}): RuleSet {
-  const defaultWindows = parseWindows(options.windows?.length ? options.windows : DEFAULT_WINDOWS)
+  const defaultWindows = parseWindows(options.windows ?? DEFAULT_WINDOWS)
   const defaultWeekdays = options.weekdaysOnly ?? true
-  const entries = options.models?.length ? options.models : DEFAULT_MODELS
+  const entries = options.models ?? DEFAULT_MODELS
   const exact = new Map<string, ResolvedModelRule>()
   const patterns: ResolvedModelRule[] = []
   for (const entry of entries) {
