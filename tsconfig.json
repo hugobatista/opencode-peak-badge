@@ -13,5 +13,6 @@
     "allowImportingTsExtensions": true,
     "types": ["node", "bun"]
   },
-  "include": ["src", "test", "tui.tsx"]
+  "include": ["src", "test", "tui.tsx", "vite.config.ts"],
+  "exclude": ["src/gui.tsx"]
 }

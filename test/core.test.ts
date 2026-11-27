@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import {
   badgeFor,
+  badgeForModels,
+  currentNow,
   inWindow,
   isPeakUtc,
   matchRule,
@@ -9,6 +11,8 @@ import {
   parseHHMM,
   parseWindows,
   resolveRules,
+  runningSubagentRefs,
+  type ModelRef,
 } from "../src/core"
 
 const windows = parseWindows([["01:00", "04:00"], ["06:00", "10:00"]])
@@ -202,5 +206,145 @@ describe("resolveRules fallback", () => {
     const rules = resolveRules({})
     expect(rules.fallback.windows).toEqual(windows)
     expect(rules.fallback.weekdaysOnly).toBe(true)
+  })
+})
+
+describe("currentNow", () => {
+  test("uses a valid fake time", () =>
+    expect(currentNow("2026-09-07T08:30:00Z").toISOString()).toBe("2026-09-07T08:30:00.000Z"))
+  test("invalid fake time falls back to the real clock", () => {
+    const fallback = d("2026-09-07T12:00:00Z")
+    expect(currentNow("not-a-date", fallback)).toBe(fallback)
+  })
+  test("missing fake time falls back to the real clock", () => {
+    const fallback = d("2026-09-07T12:00:00Z")
+    expect(currentNow(undefined, fallback)).toBe(fallback)
+  })
+})
+
+describe("badgeForModels", () => {
+  const labels = { peak: "[PEAK]", offPeak: "[OFF-PEAK]" }
+  const flash: ModelRef = { providerID: "opencode-go", id: "deepseek-v4-flash" }
+  const glm: ModelRef = { providerID: "opencode-go", id: "glm-5.3-flash" }
+  const defaults = resolveRules({})
+  const withGlmWindow = resolveRules({
+    models: [
+      { id: "opencode-go/glm-5.3-flash", windows: [["12:00", "14:00"]], weekdaysOnly: false },
+      "re:^opencode-go/deepseek-v4-flash$",
+    ],
+  })
+
+  test("main model peak", () =>
+    expect(
+      badgeForModels({
+        now: d("2026-09-07T08:30:00Z"),
+        rules: defaults,
+        labels,
+        main: flash,
+        subagents: [],
+        alwaysShow: false,
+      }),
+    ).toEqual({ label: "[PEAK]", peak: true }))
+
+  test("untracked main without alwaysShow -> undefined", () =>
+    expect(
+      badgeForModels({
+        now: d("2026-09-07T08:30:00Z"),
+        rules: defaults,
+        labels,
+        main: glm,
+        subagents: [],
+        alwaysShow: false,
+      }),
+    ).toBeUndefined())
+
+  test("alwaysShow uses the fallback windows", () =>
+    expect(
+      badgeForModels({
+        now: d("2026-09-07T08:30:00Z"),
+        rules: defaults,
+        labels,
+        main: glm,
+        subagents: [],
+        alwaysShow: true,
+      }),
+    ).toEqual({ label: "[PEAK]", peak: true }))
+
+  test("running subagent peak wins over an off-peak main", () =>
+    expect(
+      badgeForModels({
+        now: d("2026-09-07T08:30:00Z"),
+        rules: withGlmWindow,
+        labels,
+        main: glm,
+        subagents: [flash],
+        alwaysShow: false,
+      }),
+    ).toEqual({ label: "[PEAK]", peak: true }))
+
+  test("unmatched subagent adds nothing", () =>
+    expect(
+      badgeForModels({
+        now: d("2026-09-07T08:30:00Z"),
+        rules: withGlmWindow,
+        labels,
+        main: glm,
+        subagents: [{ providerID: "other", id: "model" }],
+        alwaysShow: false,
+      }),
+    ).toEqual({ label: "[OFF-PEAK]", peak: false }))
+})
+
+describe("runningSubagentRefs", () => {
+  const flash: ModelRef = { providerID: "opencode-go", id: "deepseek-v4-flash" }
+  const glm: ModelRef = { providerID: "opencode-go", id: "glm-5.3-flash" }
+  const models = new Map<string, ModelRef>([
+    ["child", flash],
+    ["grandchild", glm],
+  ])
+  const families = new Map<string, readonly string[]>([
+    ["main", ["child"]],
+    ["child", ["grandchild"]],
+  ])
+
+  test("walks nested descendants and keeps only running sessions", () => {
+    const refs = runningSubagentRefs({
+      sessionID: "main",
+      family: (id) => families.get(id) ?? [],
+      status: (id) => (id === "child" || id === "grandchild" ? "running" : "idle"),
+      model: (id) => models.get(id),
+    })
+    expect(refs).toEqual([flash, glm])
+  })
+
+  test("idle child is ignored", () => {
+    const refs = runningSubagentRefs({
+      sessionID: "main",
+      family: (id) => families.get(id) ?? [],
+      status: () => "idle",
+      model: (id) => models.get(id),
+    })
+    expect(refs).toEqual([])
+  })
+
+  test("deduplicates family entries that already include descendants", () => {
+    const refs = runningSubagentRefs({
+      sessionID: "main",
+      family: (id) => (id === "main" ? ["child", "grandchild"] : id === "child" ? ["grandchild"] : []),
+      status: () => "running",
+      model: (id) => models.get(id),
+    })
+    expect(refs).toHaveLength(2)
+    expect(new Set(refs.map((ref) => ref.id))).toEqual(new Set(["deepseek-v4-flash", "glm-5.3-flash"]))
+  })
+
+  test("missing model is skipped", () => {
+    const refs = runningSubagentRefs({
+      sessionID: "main",
+      family: () => ["child"],
+      status: () => "running",
+      model: () => undefined,
+    })
+    expect(refs).toEqual([])
   })
 })

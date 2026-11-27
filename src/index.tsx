@@ -7,28 +7,17 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { createMemo, createSignal } from "solid-js"
 import {
-  badgeFor,
-  matchRule,
-  mergeBadges,
-  modelKey,
+  badgeForModels,
+  currentNow,
   resolveRules,
+  runningSubagentRefs,
   type BadgeState,
+  type ModelRef,
   type PeakHoursOptions,
   type RuleSet,
 } from "./core"
 
-type ModelRef = { providerID: string; id: string }
-
 type BadgeView = { state: BadgeState | undefined; model: ModelRef | undefined }
-
-function currentNow(): Date {
-  const fake = process.env.OPENCODE_PEAK_HOURS_FAKE_TIME
-  if (fake) {
-    const parsed = new Date(fake)
-    if (!Number.isNaN(parsed.getTime())) return parsed
-  }
-  return new Date()
-}
 
 // OpenCode stores its TUI state under `<XDG_STATE_HOME>/opencode` (default
 // `~/.local/state/opencode`). The model picker writes the last chosen model to
@@ -54,7 +43,11 @@ export default Plugin.define({
     const alwaysShow = options.alwaysShow ?? false
     const debug = options.debug ?? false
 
-    const [tick, setTick] = createSignal(currentNow().getTime())
+    function now(): Date {
+      return currentNow(options.fakeTime ?? process.env.OPENCODE_PEAK_HOURS_FAKE_TIME)
+    }
+
+    const [tick, setTick] = createSignal(now().getTime())
     const [version, setVersion] = createSignal(0)
     // `homePick` mirrors the TUI's last picked model (model.json `recent[0]`);
     // `defaultModel` is the server's fallback from `client.model.default()`.
@@ -72,7 +65,7 @@ export default Plugin.define({
     let debounceTimer: ReturnType<typeof setTimeout> | undefined
 
     const timer = setInterval(() => {
-      setTick(currentNow().getTime())
+      setTick(now().getTime())
       // Safety net in case a filesystem event is missed.
       void applyRecentModel()
     }, pollSeconds * 1000)
@@ -181,26 +174,14 @@ export default Plugin.define({
       return homeRef()
     }
 
-    function activeChildRefs(sessionID: string): ModelRef[] {
+    function childRefs(sessionID: string): ModelRef[] {
       if (!subagents) return []
-      const refs: ModelRef[] = []
-      const seen = new Set<string>()
-      const stack: string[] = [...ctx.data.session.family(sessionID)]
-      while (stack.length > 0) {
-        const id = stack.pop()
-        if (!id || seen.has(id)) continue
-        seen.add(id)
-        if (ctx.data.session.status(id) === "running") {
-          const model = sessionModel(id)
-          if (model) refs.push(model)
-        }
-        // `family` may already return every descendant; recursing keeps nested
-        // subagents covered if it only returns direct children. `seen` caps it.
-        for (const nested of ctx.data.session.family(id)) {
-          if (!seen.has(nested)) stack.push(nested)
-        }
-      }
-      return refs
+      return runningSubagentRefs({
+        sessionID,
+        family: (id) => ctx.data.session.family(id),
+        status: (id) => ctx.data.session.status(id),
+        model: sessionModel,
+      })
     }
 
     function badgeView(sessionID: string | undefined): BadgeView {
@@ -212,22 +193,16 @@ export default Plugin.define({
         if (sessionID) picked.delete(sessionID)
         activeSessionID = sessionID
       }
-      const now = new Date(tick())
-      const states: BadgeState[] = []
       const main = mainRef(sessionID)
-      if (main) {
-        const rule =
-          matchRule(rules, modelKey(main.providerID, main.id)) ?? (alwaysShow ? rules.fallback : undefined)
-        const state = badgeFor(now, rule, labels)
-        if (state) states.push(state)
-      }
-      if (sessionID) {
-        for (const child of activeChildRefs(sessionID)) {
-          const state = badgeFor(now, matchRule(rules, modelKey(child.providerID, child.id)), labels)
-          if (state) states.push(state)
-        }
-      }
-      return { state: mergeBadges(states), model: main }
+      const state = badgeForModels({
+        now: new Date(tick()),
+        rules,
+        labels,
+        main,
+        subagents: sessionID ? childRefs(sessionID) : [],
+        alwaysShow,
+      })
+      return { state, model: main }
     }
 
     function badge(sessionID: string | undefined): BadgeState | undefined {
@@ -277,7 +252,7 @@ export default Plugin.define({
 
     __test.badge = badge
     __test.badgeText = (sessionID?: string) => badgeText(badgeView(sessionID))
-    __test.refresh = () => setTick(currentNow().getTime())
+    __test.refresh = (date?: Date) => setTick((date ?? now()).getTime())
     __test.applyRecentModel = applyRecentModel
     __test.refreshHomeModel = refreshHomeModel
 
@@ -296,7 +271,7 @@ export default Plugin.define({
 export const __test: {
   badge: ((sessionID?: string) => BadgeState | undefined) | undefined
   badgeText: ((sessionID?: string) => string) | undefined
-  refresh: (() => void) | undefined
+  refresh: ((date?: Date) => void) | undefined
   applyRecentModel: (() => Promise<void>) | undefined
   refreshHomeModel: (() => Promise<void>) | undefined
 } = { badge: undefined, badgeText: undefined, refresh: undefined, applyRecentModel: undefined, refreshHomeModel: undefined }

@@ -17,6 +17,10 @@ process.env.XDG_STATE_HOME = stateRoot
 
 const modelFile = join(modelDir, "model.json")
 
+// Test-only clock. The plugin itself always uses the real clock; tests set this
+// and call `refresh()` to evaluate a peak boundary.
+let fakeNow: Date | undefined
+
 function writeModelFile(recent: Array<{ providerID: string; modelID: string }> | undefined): void {
   if (recent === undefined) rmSync(modelFile, { force: true })
   else writeFileSync(modelFile, JSON.stringify({ recent }))
@@ -125,7 +129,7 @@ function createHarness(config: {
     cleanup,
     badge: mod.__test.badge as (sessionID?: string) => Badge,
     badgeText: mod.__test.badgeText as (sessionID?: string) => string,
-    refresh: mod.__test.refresh as () => void,
+    refresh: () => mod.__test.refresh?.(fakeNow),
     applyRecentModel: mod.__test.applyRecentModel as () => Promise<void>,
     refreshHomeModel: mod.__test.refreshHomeModel as () => Promise<void>,
     setDefaultModel: (model) => {
@@ -147,9 +151,15 @@ function createHarness(config: {
 }
 
 const setFake = (iso: string) => {
-  process.env.OPENCODE_PEAK_HOURS_FAKE_TIME = iso
+  fakeNow = new Date(iso)
 }
 const clearFake = () => {
+  fakeNow = undefined
+}
+const setEnvFake = (iso: string) => {
+  process.env.OPENCODE_PEAK_HOURS_FAKE_TIME = iso
+}
+const clearEnvFake = () => {
   delete process.env.OPENCODE_PEAK_HOURS_FAKE_TIME
 }
 
@@ -243,6 +253,32 @@ describe("default (home) model", () => {
     harness.emit("model.updated", {})
     await harness.refreshHomeModel()
     expect(harness.badge(undefined)).toEqual({ label: "[PEAK]", peak: true })
+  })
+})
+
+describe("fakeTime option", () => {
+  test("option works without the environment variable", async () => {
+    clearFake()
+    clearEnvFake()
+    const harness = await init(DS_FLASH, { fakeTime: "2026-09-07T08:30:00Z" })
+    harness.refresh()
+    expect(harness.badge(undefined)).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("environment variable works without the option", async () => {
+    clearFake()
+    setEnvFake("2026-09-07T08:30:00Z")
+    const harness = await init(DS_FLASH)
+    harness.refresh()
+    expect(harness.badge(undefined)).toEqual({ label: "[PEAK]", peak: true })
+  })
+
+  test("option overrides the environment variable", async () => {
+    clearFake()
+    setEnvFake("2026-09-07T08:30:00Z")
+    const harness = await init(DS_FLASH, { fakeTime: "2026-09-07T12:00:00Z" })
+    harness.refresh()
+    expect(harness.badge(undefined)).toEqual({ label: "[OFF-PEAK]", peak: false })
   })
 })
 
@@ -460,6 +496,7 @@ describe("alwaysShow", () => {
 
 afterAll(() => {
   clearFake()
+  clearEnvFake()
   for (const fn of cleanups) fn()
   writeModelFile(undefined)
   rmSync(stateRoot, { recursive: true, force: true })

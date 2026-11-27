@@ -1,7 +1,7 @@
 {
   "name": "opencode-peak-badge",
-  "version": "0.4.0",
-  "description": "OpenCode TUI plugin: live [PEAK]/[OFF-PEAK] badge for any model with configured peak hours. Provider-agnostic; ships with DeepSeek defaults.",
+  "version": "0.5.0",
+  "description": "OpenCode plugin for TUI and Desktop: live [PEAK]/[OFF-PEAK] badge for any model with configured peak hours. Provider-agnostic; ships with DeepSeek defaults.",
   "type": "module",
   "license": "MIT",
   "author": {
@@ -20,6 +20,7 @@
     "opencode",
     "opencode-plugin",
     "tui",
+    "desktop",
     "deepseek",
     "peak-hours"
   ],
@@ -35,16 +36,24 @@
     "LICENSE"
   ],
   "exports": {
+    ".": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
+    },
     "./tui": {
       "types": "./dist/tui.d.ts",
       "import": "./dist/tui.js",
       "default": "./dist/tui.js"
-    }
+    },
+    "./gui-experimental": "./dist/gui-experimental.cjs"
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
-    "build": "bun run scripts/build.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.gui.json --noEmit",
+    "build": "bun run build:tui && bun run build:gui",
+    "build:tui": "bun run scripts/build.ts",
+    "build:gui": "vite build",
     "prepublishOnly": "bun run typecheck && bun test && bun run build"
   },
   "peerDependencies": {
@@ -55,13 +64,15 @@
     "solid-js": ">=1.9.0"
   },
   "devDependencies": {
-    "@opencode/plugin": "2.0.10",
-    "@opencode/theme": "2.0.10",
-    "@opentui/core": "0.5.10",
-    "@opentui/solid": "0.5.10",
+    "@opencode/plugin": "2.4.2",
+    "@opencode/theme": "2.4.2",
+    "@opentui/core": "0.9.9",
+    "@opentui/solid": "0.9.9",
     "@types/bun": "^1.4.1",
     "@types/node": "^24.0.0",
     "solid-js": "1.9.12",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "vite": "^7.3.8",
+    "vite-plugin-solid": "^2.11.17"
   }
 }

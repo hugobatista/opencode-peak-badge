@@ -13,6 +13,7 @@ export type PeakHoursOptions = {
   windows?: WindowSpec[]
   weekdaysOnly?: boolean
   pollSeconds?: number
+  fakeTime?: string
   labelPeak?: string
   labelOffPeak?: string
   subagents?: boolean
@@ -35,6 +36,8 @@ export type RuleSet = {
 
 export type BadgeState = { label: string; peak: boolean }
 
+export type ModelRef = { providerID: string; id: string }
+
 export const DEFAULT_WINDOWS: WindowSpec[] = [
   ["01:00", "04:00"],
   ["06:00", "10:00"],
@@ -45,6 +48,16 @@ export const DEFAULT_MODELS: ModelEntrySpec[] = [
   "re:^opencode/deepseek",
   "re:^deepseek/deepseek",
 ]
+
+// Resolves the clock used by the badge. `fakeTime` is the plugin option shared by
+// the TUI and the desktop; the TUI also passes its legacy environment variable.
+export function currentNow(fakeTime?: string, realNow: Date = new Date()): Date {
+  if (fakeTime) {
+    const parsed = new Date(fakeTime)
+    if (!Number.isNaN(parsed.getTime())) return parsed
+  }
+  return realNow
+}
 
 export function parseHHMM(value: string): number | undefined {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim())
@@ -210,4 +223,58 @@ export function mergeBadges(states: Array<BadgeState | undefined>): BadgeState |
     if (state.peak && !result.peak) result = state
   }
   return result
+}
+
+// Shared by the TUI and desktop adapters: the main model follows `alwaysShow`;
+// a running subagent only contributes when it matches a configured rule.
+export function badgeForModels(input: {
+  now: Date
+  rules: RuleSet
+  labels: { peak: string; offPeak: string }
+  main: ModelRef | undefined
+  subagents: readonly ModelRef[]
+  alwaysShow: boolean
+}): BadgeState | undefined {
+  const states: BadgeState[] = []
+  if (input.main) {
+    const rule =
+      matchRule(input.rules, modelKey(input.main.providerID, input.main.id)) ??
+      (input.alwaysShow ? input.rules.fallback : undefined)
+    const state = badgeFor(input.now, rule, input.labels)
+    if (state) states.push(state)
+  }
+  for (const child of input.subagents) {
+    const state = badgeFor(input.now, matchRule(input.rules, modelKey(child.providerID, child.id)), input.labels)
+    if (state) states.push(state)
+  }
+  return mergeBadges(states)
+}
+
+// Walks the descendant tree of a session and returns the models of the
+// running subagents. The model callback lets each adapter decide how to read
+// (and cache) a child's model.
+export function runningSubagentRefs(input: {
+  sessionID: string
+  family: (sessionID: string) => readonly string[]
+  status: (sessionID: string) => "idle" | "running"
+  model: (sessionID: string) => ModelRef | undefined
+}): ModelRef[] {
+  const refs: ModelRef[] = []
+  const seen = new Set<string>()
+  const stack: string[] = [...input.family(input.sessionID)]
+  while (stack.length > 0) {
+    const id = stack.pop()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    if (input.status(id) === "running") {
+      const model = input.model(id)
+      if (model) refs.push(model)
+    }
+    // `family` may return every descendant already; recursing keeps nested
+    // subagents covered if it only returns direct children. `seen` caps it.
+    for (const nested of input.family(id)) {
+      if (!seen.has(nested)) stack.push(nested)
+    }
+  }
+  return refs
 }
